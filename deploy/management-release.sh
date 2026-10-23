@@ -4,6 +4,13 @@ set -Eeuo pipefail
 MODE="${1:?CHECK or DEPLOY required}"
 WEB_TAG="${2:?web image tag required}"
 WORKER_TAG="${3:?worker image tag required}"
+ROLLBACK_TEST="${4:-NO}"
+rollback_test_triggered=0
+case "$ROLLBACK_TEST" in
+  NO) ;;
+  YES) [[ "$MODE" == DEPLOY ]] || { echo INVALID_ROLLBACK_TEST_MODE; exit 2; } ;;
+  *) echo INVALID_ROLLBACK_TEST; exit 2 ;;
+esac
 
 case "$MODE" in CHECK|DEPLOY) ;; *) echo 'INVALID_MODE'; exit 2 ;; esac
 for tag in "$WEB_TAG" "$WORKER_TAG"; do
@@ -120,6 +127,8 @@ assert s["management-worker"]["image"] == os.environ["SCHUTZ_OLD_WORKER"]
 before_web_id=$(docker inspect "$web_container" --format '{{.Id}}')
 before_worker_id=$(docker inspect "$worker_container" --format '{{.Id}}')
 before_db_id=$(docker inspect "$db_container" --format '{{.Id}}')
+old_web_image_id=$(docker inspect "$web_container" --format '{{.Image}}')
+old_worker_image_id=$(docker inspect "$worker_container" --format '{{.Image}}')
 umask 077
 backup_root=/opt/schutz-monitoring/.release-backups
 mkdir -p "$backup_root"
@@ -140,6 +149,20 @@ rollback() {
     actual_worker=$(docker inspect "$worker_container" --format '{{.Config.Image}}' || true)
     if [[ "$actual_web" == "$old_web" && "$actual_worker" == "$old_worker" ]] && wait_healthy; then
       echo 'MANAGEMENT_ROLLBACK_HEALTHY'
+      if [[ "$rollback_test_triggered" == 1 ]]; then
+        if [[ $(docker inspect "$db_container" --format '{{.Id}}') == "$before_db_id" &&
+              $(docker inspect "$web_container" --format '{{.Image}}') == "$old_web_image_id" &&
+              $(docker inspect "$worker_container" --format '{{.Image}}') == "$old_worker_image_id" &&
+              $(docker inspect "$web_container" --format '{{.Id}}') != "$test_web_id" &&
+              $(docker inspect "$worker_container" --format '{{.Id}}') != "$test_worker_id" ]] &&
+           cmp -s "$backup_dir/compose.ecr.yaml" compose.ecr.yaml; then
+          echo 'MANAGEMENT_ROLLBACK_TEST_SUCCESS'
+          exit 0
+        else
+          echo 'MANAGEMENT_ROLLBACK_TEST_VERIFY_FAILED'
+          exit 1
+        fi
+      fi
     else
       echo 'MANAGEMENT_ROLLBACK_VERIFY_FAILED'
     fi
@@ -187,6 +210,13 @@ docker exec "$web_container" python -c 'import urllib.request; assert urllib.req
 [[ $(docker inspect "$worker_container" --format '{{.Id}}') != "$before_worker_id" ]]
 [[ $(docker inspect "$db_container" --format '{{.Id}}') == "$before_db_id" ]]
 wait_healthy
+if [[ "$ROLLBACK_TEST" == YES ]]; then
+  test_web_id=$(docker inspect "$web_container" --format '{{.Id}}')
+  test_worker_id=$(docker inspect "$worker_container" --format '{{.Id}}')
+  rollback_test_triggered=1
+  echo 'MANAGEMENT_ROLLBACK_TEST_TRIGGERED'
+  false
+fi
 trap - ERR INT TERM
 echo 'MANAGEMENT_CONTAINERS_RECREATED'
 echo 'MANAGEMENT_WORKER_COLLECTION_OK'

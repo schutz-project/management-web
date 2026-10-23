@@ -25,6 +25,14 @@ on:
         required: true
         default: sha-a4cb6f75b9c4d47ae1fbb9587495c9b3469aeb7b-39897326854-1
         type: string
+      rollback_test:
+        description: "YES deliberately fails after deployment and verifies rollback"
+        required: true
+        default: "NO"
+        type: choice
+        options:
+          - "NO"
+          - "YES"
       confirmation:
         description: "Type DEPLOY to change containers; leave empty for CHECK"
         required: false
@@ -64,6 +72,7 @@ jobs:
           MODE: ${{ inputs.mode }}
           WEB_TAG: ${{ inputs.web_tag }}
           WORKER_TAG: ${{ inputs.worker_tag }}
+          ROLLBACK_TEST: ${{ inputs.rollback_test }}
         run: |
           set -euo pipefail
           python3 - <<'PY'
@@ -71,7 +80,7 @@ jobs:
           from pathlib import Path
           iid=os.environ['INSTANCE_ID']
           assert iid == 'i-066c8eee143b5cdff', 'Monitoring instance required'
-          args=[os.environ['MODE'],os.environ['WEB_TAG'],os.environ['WORKER_TAG']]
+          args=[os.environ['MODE'],os.environ['WEB_TAG'],os.environ['WORKER_TAG'],os.environ['ROLLBACK_TEST']]
           script=Path('deploy/management-release.sh').read_bytes()
           b64=base64.b64encode(script).decode()
           cmd='printf %s '+shlex.quote(b64)+' | base64 -d | bash -s -- '+' '.join(map(shlex.quote,args))
