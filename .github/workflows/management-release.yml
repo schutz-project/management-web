@@ -1,0 +1,91 @@
+name: Schutz Management Manual Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      instance_id:
+        description: "Monitoring EC2 instance ID"
+        required: true
+        type: string
+      mode:
+        description: "CHECK does not change containers"
+        required: true
+        default: CHECK
+        type: choice
+        options:
+          - CHECK
+          - DEPLOY
+      web_tag:
+        description: "Immutable Management Web ECR tag"
+        required: true
+        default: sha-42a383810c16731985180190d7f9430074a7cdb9-39897334971-1
+        type: string
+      worker_tag:
+        description: "Immutable Management Worker ECR tag"
+        required: true
+        default: sha-a4cb6f75b9c4d47ae1fbb9587495c9b3469aeb7b-39897326854-1
+        type: string
+      confirmation:
+        description: "Type DEPLOY to change containers; leave empty for CHECK"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: schutz-management-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Validate release request
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          if [[ "$MODE" == DEPLOY && "$CONFIRMATION" != DEPLOY ]]; then
+            echo 'DEPLOY_CONFIRMATION_REQUIRED'
+            exit 1
+          fi
+      - uses: actions/checkout@v4
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6.3.0
+        with:
+          role-to-assume: arn:aws:iam::527673188566:role/schutz-github-deploy-role
+          aws-region: ap-northeast-2
+      - name: Check or release through SSM
+        env:
+          INSTANCE_ID: ${{ inputs.instance_id }}
+          MODE: ${{ inputs.mode }}
+          WEB_TAG: ${{ inputs.web_tag }}
+          WORKER_TAG: ${{ inputs.worker_tag }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64, json, os, re, shlex
+          from pathlib import Path
+          iid=os.environ['INSTANCE_ID']
+          assert re.fullmatch(r'i-[0-9a-f]{8,17}', iid), 'Invalid instance ID'
+          args=[os.environ['MODE'],os.environ['WEB_TAG'],os.environ['WORKER_TAG']]
+          script=Path('deploy/management-release.sh').read_bytes()
+          b64=base64.b64encode(script).decode()
+          cmd='printf %s '+shlex.quote(b64)+' | base64 -d | bash -s -- '+' '.join(map(shlex.quote,args))
+          Path('ssm-params.json').write_text(json.dumps({'commands':['set -eu',cmd]}))
+          PY
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name AWS-RunShellScript \
+            --parameters file://ssm-params.json \
+            --query 'Command.CommandId' --output text)
+          if ! aws ssm wait command-executed --command-id "$COMMAND_ID" --instance-id "$INSTANCE_ID"; then
+            aws ssm get-command-invocation --command-id "$COMMAND_ID" --instance-id "$INSTANCE_ID" \
+              --query '{Status:Status,Code:ResponseCode,Output:StandardOutputContent,Error:StandardErrorContent}' --output json
+            exit 1
+          fi
+          aws ssm get-command-invocation --command-id "$COMMAND_ID" --instance-id "$INSTANCE_ID" \
+            --query '{Status:Status,Output:StandardOutputContent}' --output json
