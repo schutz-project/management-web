@@ -23,8 +23,9 @@ $('refresh').onclick=load;$('prev').onclick=()=>{page--;load();};$('next').oncli
 $('session-retry').onclick=restoreSession;
 restoreSession();
 
-function clearObservations(){for(const id of ['metrics','resources','nginx-log','app-log'])$(id).replaceChildren();$('metrics-time').textContent='';$('observability').hidden=true;}
+function clearObservations(){for(const id of ['metrics','detail-metrics','alert-target-status','resources','nginx-log','app-log'])$(id).replaceChildren();$('metrics-time').textContent='';$('observability').hidden=true;}
 const metricLabels={requests:['요청량','건/초'],errors:['5xx 오류','건/초'],app_ms:['앱 응답 p95','ms'],db_ms:['DB 조회 p95','ms']};
+const detailLabels={app_routes:['앱 경로별 요청','건/초'],app_p95_routes:['앱 경로별 응답 p95','ms'],proxy_requests:['프록시 경로별 요청','건/초'],proxy_errors:['프록시 경로별 5xx','건/초'],proxy_p95:['프록시 전체 응답 p95','초'],upstream_p95:['업스트림 응답 p95','초']};
 const observationLabels={unavailable:'수집 서비스 연결 실패',stale:'수집 지연',no_data:'데이터 없음'};
 function numeric(v,unit=''){return typeof v==='number'&&Number.isFinite(v)?v.toLocaleString('ko-KR',{maximumFractionDigits:2})+(unit?' '+unit:''):'데이터 없음';}
 function shortTime(v){return new Date(v).toLocaleTimeString('ko-KR',{timeZone:'Asia/Seoul',hour:'2-digit',minute:'2-digit',hour12:false});}
@@ -42,8 +43,14 @@ async function loadObservations(g){
  $('metrics-time').textContent='지표를 조회하고 있습니다…';
  try{const data=await request('/api/observability');if(g!==generation||!user||selected||view!=='open')return;const end=Date.parse(data.as_of);$('metrics-time').textContent='조회 '+date(data.as_of)+' · 새로고침 시 갱신';$('metrics').replaceChildren();
  for(const [key,[label,unit]]of Object.entries(metricLabels)){const metric=data.metrics[key],card=node('article',undefined,'metric-card');card.append(node('h3',label),node('b',metric.status==='ok'?numeric(metric.value,unit):(observationLabels[metric.status]||'데이터 없음'),'metric-value'));if(metric.status==='ok')card.append(sparkline(metric.points,end));else card.append(node('p','최근 데이터가 수집되면 표시됩니다.','muted'));const footer=node('div',undefined,'chart-times');footer.append(node('span',shortTime(end-900000)),node('span',shortTime(end)));card.append(footer);$('metrics').append(card);}
- $('resources').replaceChildren();if(!data.resources.items.length)$('resources').append(node('p',data.resources.status==='unavailable'?'서버 자원 수집 서비스에 연결할 수 없습니다.':'아직 서버 자원 데이터가 없습니다. EC2에서 Node Exporter를 연결하면 표시됩니다.','empty-resource'));
+ const alertRoot=$('alert-target-status');alertRoot.replaceChildren();
+ const alerts=data.alerts;if(alerts.status!=='ok')alertRoot.append(node('p','경보 조회 실패','muted'));else if(!alerts.items.length)alertRoot.append(node('p','발생 중인 경보 없음','muted'));else for(const item of alerts.items)alertRoot.append(node('p','경보 · '+item.name+(item.severity?' · '+item.severity:'')));
+ const targets=data.targets;if(targets.status!=='ok')alertRoot.append(node('p','수집 대상 조회 실패','muted'));else for(const item of targets.items)alertRoot.append(node('p',(item.up?'정상':'수집 실패')+' · '+item.job+' · '+item.instance));
+ $('detail-metrics').replaceChildren();
+ for(const [key,[label,unit]] of Object.entries(detailLabels)){const detail=data.details[key],card=node('article',undefined,'metric-card');card.append(node('h3',label));if(detail.status!=='ok')card.append(node('p','조회 실패','muted'));else if(!detail.items.length)card.append(node('p','최근 데이터 없음','muted'));else for(const item of detail.items){const line=node('div',undefined,'route-metric');line.append(node('span',item.route+' · '+numeric(item.value,unit)));if(item.points.length)line.append(sparkline(item.points,end));card.append(line);}$('detail-metrics').append(card);}
+ $('resources').replaceChildren();if(!data.resources.items.length)$('resources').append(node('p',data.resources.status==='unavailable'?'서버 자원 수집 서비스에 연결할 수 없습니다.':'아직 서버 자원 데이터가 없습니다. Alloy 수집 상태를 확인해 주세요.','empty-resource'));
  for(const host of data.resources.items){const card=node('article',undefined,'resource-card');card.append(node('h3',host.instance));if(host.status!=='ok')card.append(node('p',observationLabels[host.status]||'수집 지연'));const grid=node('div',undefined,'resource-values');for(const [key,label]of [['cpu','CPU'],['memory','메모리'],['disk','루트 디스크']]){const e=node('div');e.append(node('span',label),node('b',numeric(host[key],'%')));grid.append(e);}card.append(grid);$('resources').append(card);}
  renderLogs($('nginx-log'),data.logs['portal-nginx']);renderLogs($('app-log'),data.logs['portal-api']);
- }catch(e){if(g!==generation||!user)return;$('metrics-time').textContent='지표·로그를 가져오지 못했습니다. 새로고침해 주세요.';for(const id of ['metrics','resources','nginx-log','app-log'])$(id).replaceChildren();}
+  }catch(e){if(g!==generation||!user)return;$('metrics-time').textContent='지표·로그를 가져오지 못했습니다. 새로고침해 주세요.';for(const id of ['metrics','detail-metrics','alert-target-status','resources','nginx-log','app-log'])$(id).replaceChildren();}
 }
+

@@ -63,6 +63,10 @@ function boot(url = '/', options = {}) {
     if (resource === '/api/observability') return response({
       as_of: '2026-10-24T00:00:00Z',
       metrics: Object.fromEntries(['requests', 'errors', 'app_ms', 'db_ms'].map(k => [k, {status: 'no_data'}])),
+      details: Object.fromEntries(['app_routes','app_p95_routes','proxy_requests','proxy_errors','proxy_p95','upstream_p95']
+        .map(k => [k, {status: 'ok', items: [{route: '/health', value: 2, points: [[Date.parse('2026-10-24T00:00:00Z'), 2]]}]}])),
+      alerts: {status: 'ok', items: [{name: 'PortalProbeFailed', severity: 'critical'}]},
+      targets: {status: 'ok', items: [{job: 'ec2-node', instance: 'service:9100', up: true}]},
       resources: {items: []}, logs: {'portal-nginx': {status: 'ok', items: []}, 'portal-api': {status: 'ok', items: []}}
     });
     throw new Error('unexpected request: ' + resource);
@@ -88,6 +92,17 @@ test('인증 확인이 끝나기 전에는 로그인 화면과 업무 화면을 
   assert.equal(app.get('login').hidden, true);
   assert.equal(app.get('workspace').hidden, false);
   assert.equal(app.get('session-loading').hidden, true);
+});
+
+test('경보·수집 대상·경로별 프록시 지표를 관리자 화면에 표시한다', async () => {
+  const app = boot('/');
+  await settle();
+  assert.ok(app.calls.includes('/api/observability'));
+  assert.equal(app.get('detail-metrics').children.length, 6, app.get('metrics-time').textContent);
+  assert.ok(app.get('alert-target-status').children.some(row =>
+    row.textContent.includes('PortalProbeFailed')));
+  assert.ok(app.get('alert-target-status').children.some(row =>
+    row.textContent.includes('ec2-node')));
 });
 
 test('새로고침 후 처리 이력의 페이지를 URL에서 복원한다', async () => {
@@ -153,3 +168,4 @@ test('로그아웃은 상세 URL을 초기화하고 로그인 화면으로 전�
   assert.equal(app.location.pathname, '/');
   assert.equal(app.location.search, '');
 });
+
