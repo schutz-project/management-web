@@ -60,14 +60,18 @@ function boot(url = '/', options = {}) {
       as_of: '2026-10-24T00:00:00Z', servers: [],
       incident_counts: {new: 0, accepted: 0, in_progress: 0, closed: 0}
     });
-    if (resource === '/api/observability') return response({
+    if (resource.startsWith('/api/observability?')) return response({
+      window_minutes: {'15m':15,'1h':60,'6h':360,'24h':1440}[new URL(resource, location).searchParams.get('window')],
+      step_seconds: 30,
       as_of: '2026-10-24T00:00:00Z',
       metrics: Object.fromEntries(['requests', 'errors', 'app_ms', 'db_ms'].map(k => [k, {status: 'no_data'}])),
       details: Object.fromEntries(['app_routes','app_p95_routes','proxy_requests','proxy_errors','proxy_p95','upstream_p95']
         .map(k => [k, {status: 'ok', items: [{route: '/health', value: 2, points: [[Date.parse('2026-10-24T00:00:00Z'), 2]]}]}])),
       alerts: {status: 'ok', items: [{name: 'PortalProbeFailed', severity: 'critical'}]},
       targets: {status: 'ok', items: [{job: 'ec2-node', instance: 'service:9100', up: true}]},
-      resources: {items: []}, logs: {'portal-nginx': {status: 'ok', items: []}, 'portal-api': {status: 'ok', items: []}}
+      resources: {items: [{instance:'service:9100',status:'ok',cpu:30,memory:40,disk:50,history:
+        Object.fromEntries(['cpu','memory','disk'].map(k=>[k,{status:'ok',value:30,
+          points:[[Date.parse('2026-10-24T00:00:00Z'),30]],summary:{mean:25,max:30,samples:2}}]))}]}, logs: {'portal-nginx': {status: 'ok', items: []}, 'portal-api': {status: 'ok', items: []}}
     });
     throw new Error('unexpected request: ' + resource);
   }
@@ -97,7 +101,7 @@ test('인증 확인이 끝나기 전에는 로그인 화면과 업무 화면을 
 test('경보·수집 대상·경로별 프록시 지표를 관리자 화면에 표시한다', async () => {
   const app = boot('/');
   await settle();
-  assert.ok(app.calls.includes('/api/observability'));
+  assert.ok(app.calls.includes('/api/observability?window=15m'));
   assert.equal(app.get('detail-metrics').children.length, 6, app.get('metrics-time').textContent);
   assert.ok(app.get('alert-target-status').children.some(row =>
     row.textContent.includes('PortalProbeFailed')));
@@ -169,3 +173,27 @@ test('로그아웃은 상세 URL을 초기화하고 로그인 화면으로 전�
   assert.equal(app.location.search, '');
 });
 
+
+test('조회 기간을 변경하면 API와 URL에 같은 기간을 적용한다', async () => {
+ const app=boot('/');await settle();
+ app.get('metric-window').value='6h';app.get('metric-window').onchange();await settle();
+ assert.ok(app.calls.includes('/api/observability?window=6h'));
+ assert.equal(app.location.search,'?window=6h');
+ assert.ok(app.get('metrics-time').textContent.includes('간격 표본'));
+ const reload=boot(app.location.href);await settle();
+ assert.equal(reload.get('metric-window').value,'6h');
+ assert.ok(reload.calls.includes('/api/observability?window=6h'));
+});
+test('허용하지 않는 조회 기간은 기본값으로 복원한다', async () => {
+ const app=boot('/?window=unbounded');await settle();
+ assert.equal(app.get('metric-window').value,'15m');
+ assert.ok(app.calls.includes('/api/observability?window=15m'));
+ assert.equal(app.location.search,'');
+});
+
+test('서버 자원 추이와 표본 요약을 함께 표시한다', async () => {
+ const app=boot('/');await settle();
+ const resources=app.get('resources');
+ assert.equal(resources.querySelectorAll('svg').length,3);
+ assert.ok(resources.querySelectorAll('small').some(x=>x.textContent.includes('표본 평균')));
+});
