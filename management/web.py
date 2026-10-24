@@ -56,9 +56,11 @@ def create_app(settings=None,engine=None,metric_readers=None,observer=None):
             counts={k:db.scalar(select(func.count()).select_from(Incident).where(Incident.status==k)) for k in ['new','accepted','in_progress','closed']}
             return {'as_of':stamp(current),'servers':servers,'incident_counts':counts}
     @app.get('/api/observability')
-    async def observability(request:Request):
+    async def observability(request:Request,window:str='15m'):
         with factory.begin() as db: admin(request,db)
-        return await app.state.observer.snapshot()
+        from management.observability import WINDOWS
+        if window not in WINDOWS: invalid('window')
+        return await app.state.observer.snapshot(window=window)
     @app.get('/api/incidents')
     def incidents(request:Request,status:str='open',page:int=1):
         if status not in ['open','closed'] or not 1<=page<=100000: invalid('query')

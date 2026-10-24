@@ -1,6 +1,7 @@
 'use strict';
 const $=id=>document.getElementById(id);
-let csrf=null,user=null,view='open',page=1,total=0,selected=null,generation=0,busy=false,restoringSession=true;
+let csrf=null,user=null,view='open',page=1,total=0,selected=null,generation=0,busy=false,restoringSession=true,metricWindow='15m';
+const metricWindows={'15m':15,'1h':60,'6h':360,'24h':1440};
 const names={new:'신규',accepted:'접수',in_progress:'조치 중',closed:'종료',normal:'정상',abnormal:'이상',unknown:'미확인',pending:'대기',running:'실행 중',succeeded:'완료',failed:'실패',availability_failure:'가용성 실패',response_delay:'응답 지연',login_failures:'반복 로그인 실패'};
 const reasons={ACTION_REQUIRED:'접수 후 조치 기록이 필요합니다.',TEST_STOP_REQUIRED:'시험 입력 중지 확인이 필요합니다.',LOG_COLLECTION_STALE:'로그 수집이 지연되고 있습니다.',FAILURE_FREE_WINDOW_REQUIRED:'신규 로그인 실패 없이 60초가 지나야 합니다.',TWO_HEALTHY_CHECKS_REQUIRED:'정상 점검 2회 연속이 필요합니다.',CHECK_COLLECTION_STALE:'최근 정상 점검이 필요합니다.'};
 function node(tag,text,className=''){const e=document.createElement(tag);if(text!==undefined)e.textContent=text;e.className=className;return e;}
@@ -10,16 +11,17 @@ function signed(value){user=value;$('login').hidden=restoringSession||!!user;$('
 async function request(path,options={}){const abort=new AbortController(),timer=setTimeout(()=>abort.abort(),8000);try{const r=await fetch(path,{...options,signal:abort.signal,credentials:'same-origin',cache:'no-store'});let body=null;if((r.headers.get('content-type')||'').includes('application/json'))body=await r.json();if(!r.ok){const e=new Error(body?.message||'요청을 처리할 수 없습니다.');Object.assign(e,{status:r.status,details:body?.details});if(r.status===401){csrf=null;signed(null);await context();}throw e;}if(!body||typeof body!=='object')throw new Error('응답을 확인할 수 없습니다.');return body;}finally{clearTimeout(timer);}}
 async function context(){const data=await request('/api/auth/context');csrf=data.csrf_token;signed(data.user);$('login-button').disabled=!csrf;if(user&&user.role!=='admin')message('관리자 계정으로 로그인해 주세요.',true);return data;}
 function button(text,run){const b=node('button',text);b.type='button';b.onclick=run;return b;}
-function restoreLocation(){const params=new URLSearchParams(location.search);view=params.get('view')==='closed'?'closed':'open';const value=params.get('page')||'1';page=/^[1-9][0-9]{0,5}$/.test(value)&&Number(value)<=100000?Number(value):1;const match=location.pathname.match(/^\/incidents\/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})\/?$/i);selected=match?match[1]:null;}
-function rememberLocation(){const params=new URLSearchParams();if(view==='closed')params.set('view',view);if(page>1)params.set('page',String(page));const query=params.toString();history.replaceState(null,'',(selected?'/incidents/'+encodeURIComponent(selected):'/')+(query?'?'+query:''));}
+function restoreLocation(){const params=new URLSearchParams(location.search);metricWindow=Object.hasOwn(metricWindows,params.get('window'))?params.get('window'):'15m';$('metric-window').value=metricWindow;view=params.get('view')==='closed'?'closed':'open';const value=params.get('page')||'1';page=/^[1-9][0-9]{0,5}$/.test(value)&&Number(value)<=100000?Number(value):1;const match=location.pathname.match(/^\/incidents\/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})\/?$/i);selected=match?match[1]:null;}
+function rememberLocation(){const params=new URLSearchParams();if(view==='closed')params.set('view',view);if(page>1)params.set('page',String(page));if(metricWindow!=='15m')params.set('window',metricWindow);const query=params.toString();history.replaceState(null,'',(selected?'/incidents/'+encodeURIComponent(selected):'/')+(query?'?'+query:''));}
 async function restoreSession(){restoringSession=true;$('login').hidden=true;$('workspace').hidden=true;$('session-loading').hidden=false;$('session-message').textContent='로그인 상태를 확인하고 있습니다…';$('session-retry').hidden=true;try{await context();restoreLocation();await load();restoringSession=false;signed(user);$('session-loading').hidden=true;}catch(e){$('session-message').textContent='로그인 상태를 확인하지 못했습니다. 연결을 확인한 뒤 다시 시도해주세요.';$('session-retry').hidden=false;}}
 async function load(){if(!user||user.role!=='admin')return;rememberLocation();const g=++generation;$('observability').hidden=!!selected||view==='closed';message('');try{if(selected){const data=await request('/api/incidents/'+encodeURIComponent(selected));if(g===generation)renderDetail(data);return;}const list=await request('/api/incidents?status='+view+'&page='+page);if(g!==generation)return;total=list.total;$('overview').hidden=view==='closed';$('detail').hidden=true;$('list').hidden=false;$('pagination').hidden=false;$('title').textContent=view==='closed'?'처리 이력':'대시보드';$('list').replaceChildren();if(!list.items.length)$('list').append(node('p',view==='closed'?'종료된 사건이 없습니다.':'열린 사건이 없습니다.'));for(const row of list.items){const e=node('div',undefined,'incident');const text=node('div');text.append(node('b',(row.synthetic?'[모의] ':'')+(names[row.rule_id]||row.rule_id)),node('p',row.target_id+' · '+date(row.detected_at)),node('small',row.id),node('p',names[row.status]||row.status));if(row.closed_at)text.append(node('p','종료 '+date(row.closed_at)));e.append(text,button('상세 보기',()=>{selected=row.id;load();}));$('list').append(e);}$('page').textContent=page+' / '+Math.max(1,Math.ceil(total/20));$('prev').disabled=page===1;$('next').disabled=page*20>=total;if(view==='open'){const d=await request('/api/dashboard');if(g!==generation)return;$('as-of').textContent='조회 시각 '+date(d.as_of);$('counts').textContent='신규 '+d.incident_counts.new+' · 처리 중 '+(d.incident_counts.accepted+d.incident_counts.in_progress)+' · 종료 '+d.incident_counts.closed;$('targets').replaceChildren();for(const t of d.servers){const c=node('article',undefined,'card');c.append(node('span',t.target_id),node('b',names[t.status],t.status),node('small','점검 '+date(t.last_checked_at)));if(t.collection_delayed)c.append(node('p','수집 지연 · 상태를 확정할 수 없습니다.'));$('targets').append(c);}loadObservations(g);}}catch(e){message(e.message||'연결을 확인해 주세요.',true);}}
 async function mutate(path,body,form=null){if(busy)return;busy=true;const controls=[...$('detail').querySelectorAll('button')];controls.forEach(b=>b.disabled=true);try{await request(path,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(body)});if(form)form.reset();await load();message('저장했습니다.');}catch(e){if(e.status===403)await context();message((e.message||'처리 결과를 확인할 수 없습니다. 다시 보내기 전에 이력을 확인해 주세요.')+(e.details?'\n'+e.details.map(r=>reasons[r]||r).join('\n'):''),true);if(!e.status){const warning=$('feedback').textContent;await load();message(warning,true);}}finally{busy=false;controls.forEach(b=>b.disabled=false);}}
 function renderDetail(d){$('observability').hidden=true;$('overview').hidden=true;$('list').hidden=true;$('pagination').hidden=true;$('detail').hidden=false;$('title').textContent='사건 상세';$('detail').replaceChildren();const root=$('detail');root.append(button('목록으로',()=>{selected=null;load();}),node('h2',(d.synthetic?'[모의] ':'')+(names[d.rule_id]||d.rule_id)),node('p',d.id+' · '+d.target_id),node('p','상태 '+names[d.status]+' · 탐지 '+date(d.detected_at)));if(d.status==='new')root.append(button('사건 접수',()=>mutate('/api/incidents/'+d.id+'/accept',{})));root.append(node('h2','Slack · AI 처리'));const jobs=node('div',undefined,'jobs');for(const j of d.jobs){const e=node('article');e.append(node('h3',j.kind==='ai'?'AI 분석':j.kind==='slack_ai'?'AI 후속 알림':'최초 알림'),node('p',(names[j.status]||j.status)+' · '+j.attempts+'회 시도'),node('b',j.mode==='demo'?'시험 모드 · 외부 호출 없음':j.mode==='live'?'실제 연결':'실패 주입 모드'));if(j.error_code)e.append(node('p',j.error_code));if(j.result)e.append(node('pre',JSON.stringify(j.result,null,2)));const history=node('details');history.append(node('summary','시도 이력'),node('pre',JSON.stringify(j.history,null,2)));e.append(history);jobs.append(e);}root.append(jobs,node('h2','탐지 근거'));for(const evidence of d.evidence){const e=node('details');e.append(node('summary',evidence.id+' · '+date(evidence.occurred_at)),node('pre',JSON.stringify(evidence.payload,null,2)));root.append(e);}root.append(node('h2','접수 · 조치 · 종료 이력'));for(const a of d.actions){const e=node('div',undefined,'action-row');e.append(node('p',a.content),node('small','사용자 '+a.actor_id+' · '+date(a.created_at)));root.append(e);}if(['accepted','in_progress'].includes(d.status)){const f=node('form');const label=node('label','조치 내용');label.htmlFor='action-content';const input=node('textarea');input.id='action-content';input.maxLength=1000;input.required=true;const submit=node('button','조치 기록 저장');f.append(label,input,submit);f.onsubmit=event=>{event.preventDefault();mutate('/api/incidents/'+d.id+'/actions',{content:input.value},f);};root.append(f);}if(d.status==='in_progress'){root.append(node('h2','복구 확인과 사건 종료'));for(const r of d.closure.reasons)root.append(node('p',reasons[r]||r));const f=node('form'),label=node('label','종료 근거');label.htmlFor='resolution';const input=node('textarea');input.id='resolution';input.maxLength=1000;input.required=true;f.append(label,input);let check=null;if(d.rule_id==='login_failures'){const l=node('label');check=node('input');check.type='checkbox';check.required=true;l.append(check,'시험 입력을 중지했습니다.');f.append(l);}f.append(node('button','사건 종료'));f.onsubmit=e=>{e.preventDefault();const body={resolution:input.value};if(check)body.test_stopped=check.checked;mutate('/api/incidents/'+d.id+'/close',body,f);};root.append(f);}if(d.closed_at)root.append(node('p','종료 '+date(d.closed_at)+' · '+d.resolution));if(window.SchutzDrafts)window.SchutzDrafts.attach(d,request);}
 $('login-form').onsubmit=async e=>{e.preventDefault();if(busy||!csrf)return;busy=true;$('login-button').disabled=true;try{const data=await request('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({username:$('username').value.trim(),password:$('password').value})});csrf=data.csrf_token;signed(data.user);await load();}catch(error){message(error.message||'로그인 상태를 확인해 주세요.',true);await context();if(user)await load();}finally{busy=false;$('password').value='';$('login-button').disabled=!csrf;}};
-$('logout').onclick=async()=>{if(busy)return;busy=true;try{await request('/api/auth/logout',{method:'POST',headers:{'X-CSRF-Token':csrf}});signed(null);view='open';page=1;rememberLocation();await context();message('로그아웃했습니다.');}catch(e){await context();message('로그아웃 상태를 확인했습니다.',!!user);}finally{busy=false;}};
+$('logout').onclick=async()=>{if(busy)return;busy=true;try{await request('/api/auth/logout',{method:'POST',headers:{'X-CSRF-Token':csrf}});signed(null);view='open';page=1;metricWindow='15m';$('metric-window').value=metricWindow;rememberLocation();await context();message('로그아웃했습니다.');}catch(e){await context();message('로그아웃 상태를 확인했습니다.',!!user);}finally{busy=false;}};
 for(const [id,status] of [['dashboard-nav','open'],['history-nav','closed']])$(id).onclick=()=>{if(busy)return;view=status;page=1;selected=null;load();};
 $('refresh').onclick=load;$('prev').onclick=()=>{page--;load();};$('next').onclick=()=>{page++;load();};
+$('metric-window').onchange=()=>{const next=$('metric-window').value;if(Object.hasOwn(metricWindows,next)){metricWindow=next;load();}};
 $('session-retry').onclick=restoreSession;
 restoreSession();
 
@@ -29,28 +31,81 @@ const detailLabels={app_routes:['앱 경로별 요청','건/초'],app_p95_routes
 const observationLabels={unavailable:'수집 서비스 연결 실패',stale:'수집 지연',no_data:'데이터 없음'};
 function numeric(v,unit=''){return typeof v==='number'&&Number.isFinite(v)?v.toLocaleString('ko-KR',{maximumFractionDigits:2})+(unit?' '+unit:''):'데이터 없음';}
 function shortTime(v){return new Date(v).toLocaleTimeString('ko-KR',{timeZone:'Asia/Seoul',hour:'2-digit',minute:'2-digit',hour12:false});}
-function sparkline(points,end){
- const ns='http://www.w3.org/2000/svg';const svg=document.createElementNS(ns,'svg');svg.setAttribute('viewBox','0 0 320 100');svg.setAttribute('role','img');svg.setAttribute('aria-label','최근 15분 변화');const values=points.filter(p=>p[1]!==null&&Number.isFinite(p[1]));if(!values.length)return node('p','그래프 데이터 없음','muted');
- const max=Math.max(...values.map(p=>p[1]),0.001),start=end-900000;const scale=p=>[10+Math.max(0,Math.min(1,(p[0]-start)/900000))*300,85-Math.max(0,p[1])/max*70];let segment=[];
+function sparkline(points,end,minutes=15,step=30,ceiling=null){
+ const ns='http://www.w3.org/2000/svg';const svg=document.createElementNS(ns,'svg');svg.setAttribute('viewBox','0 0 320 100');svg.setAttribute('role','img');svg.setAttribute('aria-label','최근 '+minutes+'분 변화');const values=points.filter(p=>p[1]!==null&&Number.isFinite(p[1]));if(!values.length)return node('p','그래프 데이터 없음','muted');
+ const max=ceiling||Math.max(...values.map(p=>p[1]),0.001),span=minutes*60000,start=end-span;const scale=p=>[10+Math.max(0,Math.min(1,(p[0]-start)/span))*300,85-Math.max(0,p[1])/max*70];let segment=[];
  function draw(){if(segment.length){const poly=document.createElementNS(ns,'polyline');poly.setAttribute('points',segment.join(' '));poly.setAttribute('fill','none');poly.setAttribute('stroke','#2775c5');poly.setAttribute('stroke-width','2.5');svg.append(poly);}segment=[];}
- for(const p of points){if(p[1]===null||!Number.isFinite(p[1])){draw();continue;}const xy=scale(p);segment.push(xy.join(','));const circle=document.createElementNS(ns,'circle');circle.setAttribute('cx',xy[0]);circle.setAttribute('cy',xy[1]);circle.setAttribute('r','2');circle.setAttribute('fill','#2775c5');const title=document.createElementNS(ns,'title');title.textContent=shortTime(p[0])+' · '+numeric(p[1]);circle.append(title);svg.append(circle);}draw();
+ let previous=null;for(const p of points){if(previous!==null&&p[0]-previous>step*1500)draw();previous=p[0];if(p[1]===null||!Number.isFinite(p[1])){draw();continue;}const xy=scale(p);segment.push(xy.join(','));const circle=document.createElementNS(ns,'circle');circle.setAttribute('cx',xy[0]);circle.setAttribute('cy',xy[1]);circle.setAttribute('r','2');circle.setAttribute('fill','#2775c5');const title=document.createElementNS(ns,'title');title.textContent=shortTime(p[0])+' · '+numeric(p[1]);circle.append(title);svg.append(circle);}draw();
  const axis=document.createElementNS(ns,'text');axis.setAttribute('x','10');axis.setAttribute('y','11');axis.setAttribute('font-size','10');axis.setAttribute('fill','#64758a');axis.textContent='최대 '+numeric(max);svg.append(axis);return svg;
 }
 function renderLogs(root,data){root.replaceChildren();if(data.status!=='ok'){root.append(node('p',observationLabels[data.status]||'조회 실패','muted'));return;}if(!data.items.length){root.append(node('p','최근 5분 로그 없음','muted'));return;}
  const wrap=node('div',undefined,'log-scroll'),table=node('table'),head=node('thead'),tr=node('tr');for(const title of ['시각','요청 경로 / 이벤트','상태','상세'])tr.append(node('th',title));head.append(tr);table.append(head);const body=node('tbody');for(const row of data.items){const f=row.fields,tr=node('tr');tr.append(node('td',shortTime(f.occurred_at||f.timestamp||row.collected_at)),node('td',(f.route||'other')+(f.event_type?'\n'+f.event_type:'')),node('td',String(f.status_code??f.status??'—')));const td=node('td'),details=node('details');details.append(node('summary','보기'),node('pre',JSON.stringify(f,null,2)));td.append(details);tr.append(td);body.append(tr);}table.append(body);wrap.append(table);root.append(wrap);
 }
+function summaryText(summary,unit){
+ if(!summary||!summary.samples)return '유효한 표본 없음';
+ return '표본 평균 '+numeric(summary.mean,unit)+' · 최대 '+numeric(summary.max,unit)+' · '+summary.samples+'개 표본';
+}
+function metricCard(label,unit,metric,end,minutes,step){
+ const card=node('article',undefined,'metric-card');
+ card.append(node('h3',label),node('b',metric.status==='ok'?numeric(metric.value,unit):(observationLabels[metric.status]||'데이터 없음'),'metric-value'));
+ if(metric.points?.length)card.append(sparkline(metric.points,end,minutes,step));
+ else card.append(node('p','선택 기간에 표시할 데이터가 없습니다.','muted'));
+ card.append(node('small',summaryText(metric.summary,unit),'metric-summary'));
+ const footer=node('div',undefined,'chart-times');
+ footer.append(node('span',shortTime(end-minutes*60000)),node('span',shortTime(end)));
+ card.append(footer);return card;
+}
 async function loadObservations(g){
  $('metrics-time').textContent='지표를 조회하고 있습니다…';
- try{const data=await request('/api/observability');if(g!==generation||!user||selected||view!=='open')return;const end=Date.parse(data.as_of);$('metrics-time').textContent='조회 '+date(data.as_of)+' · 새로고침 시 갱신';$('metrics').replaceChildren();
- for(const [key,[label,unit]]of Object.entries(metricLabels)){const metric=data.metrics[key],card=node('article',undefined,'metric-card');card.append(node('h3',label),node('b',metric.status==='ok'?numeric(metric.value,unit):(observationLabels[metric.status]||'데이터 없음'),'metric-value'));if(metric.status==='ok')card.append(sparkline(metric.points,end));else card.append(node('p','최근 데이터가 수집되면 표시됩니다.','muted'));const footer=node('div',undefined,'chart-times');footer.append(node('span',shortTime(end-900000)),node('span',shortTime(end)));card.append(footer);$('metrics').append(card);}
- const alertRoot=$('alert-target-status');alertRoot.replaceChildren();
- const alerts=data.alerts;if(alerts.status!=='ok')alertRoot.append(node('p','경보 조회 실패','muted'));else if(!alerts.items.length)alertRoot.append(node('p','발생 중인 경보 없음','muted'));else for(const item of alerts.items)alertRoot.append(node('p','경보 · '+item.name+(item.severity?' · '+item.severity:'')));
- const targets=data.targets;if(targets.status!=='ok')alertRoot.append(node('p','수집 대상 조회 실패','muted'));else for(const item of targets.items)alertRoot.append(node('p',(item.up?'정상':'수집 실패')+' · '+item.job+' · '+item.instance));
- $('detail-metrics').replaceChildren();
- for(const [key,[label,unit]] of Object.entries(detailLabels)){const detail=data.details[key],card=node('article',undefined,'metric-card');card.append(node('h3',label));if(detail.status!=='ok')card.append(node('p','조회 실패','muted'));else if(!detail.items.length)card.append(node('p','최근 데이터 없음','muted'));else for(const item of detail.items){const line=node('div',undefined,'route-metric');line.append(node('span',item.route+' · '+numeric(item.value,unit)));if(item.points.length)line.append(sparkline(item.points,end));card.append(line);}$('detail-metrics').append(card);}
- $('resources').replaceChildren();if(!data.resources.items.length)$('resources').append(node('p',data.resources.status==='unavailable'?'서버 자원 수집 서비스에 연결할 수 없습니다.':'아직 서버 자원 데이터가 없습니다. Alloy 수집 상태를 확인해 주세요.','empty-resource'));
- for(const host of data.resources.items){const card=node('article',undefined,'resource-card');card.append(node('h3',host.instance));if(host.status!=='ok')card.append(node('p',observationLabels[host.status]||'수집 지연'));const grid=node('div',undefined,'resource-values');for(const [key,label]of [['cpu','CPU'],['memory','메모리'],['disk','루트 디스크']]){const e=node('div');e.append(node('span',label),node('b',numeric(host[key],'%')));grid.append(e);}card.append(grid);$('resources').append(card);}
- renderLogs($('nginx-log'),data.logs['portal-nginx']);renderLogs($('app-log'),data.logs['portal-api']);
-  }catch(e){if(g!==generation||!user)return;$('metrics-time').textContent='지표·로그를 가져오지 못했습니다. 새로고침해 주세요.';for(const id of ['metrics','detail-metrics','alert-target-status','resources','nginx-log','app-log'])$(id).replaceChildren();}
+ try{
+  const data=await request('/api/observability?window='+encodeURIComponent(metricWindow));
+  if(g!==generation||!user||selected||view!=='open')return;
+  const end=Date.parse(data.as_of),minutes=data.window_minutes||15,step=data.step_seconds||30;
+  $('metrics-time').textContent=date(data.range_start||end-minutes*60000)+' ~ '+date(data.as_of)+' · '+step+'초 간격 표본 · 새로고침 시 갱신';
+  $('metric-period-note').textContent='선택 기간의 요청량·5xx·앱·DB 응답 p95 · 평균·최대는 표시된 유효 표본 기준이며 누락 데이터는 제외합니다.';
+  $('metrics').replaceChildren();
+  for(const [key,[label,unit]]of Object.entries(metricLabels))$('metrics').append(metricCard(label,unit,data.metrics[key],end,minutes,step));
+  const alertRoot=$('alert-target-status');alertRoot.replaceChildren();
+  const alerts=data.alerts;
+  if(alerts.status!=='ok')alertRoot.append(node('p','경보 조회 실패','muted'));
+  else if(!alerts.items.length)alertRoot.append(node('p','발생 중인 경보 없음','muted'));
+  else for(const item of alerts.items)alertRoot.append(node('p','경보 · '+item.name+(item.severity?' · '+item.severity:'')));
+  const targets=data.targets;
+  if(targets.status!=='ok')alertRoot.append(node('p','수집 대상 조회 실패','muted'));
+  else for(const item of targets.items)alertRoot.append(node('p',(item.up?'정상':'수집 실패')+' · '+item.job+' · '+item.instance));
+  $('detail-metrics').replaceChildren();
+  for(const [key,[label,unit]]of Object.entries(detailLabels)){
+   const detail=data.details[key],card=node('article',undefined,'metric-card');card.append(node('h3',label));
+   if(detail.status!=='ok')card.append(node('p','조회 실패','muted'));
+   else if(!detail.items.length)card.append(node('p','최근 데이터 없음','muted'));
+   else for(const item of detail.items){
+    const line=node('div',undefined,'route-metric');
+    line.append(node('span',item.route+' · '+numeric(item.value,unit)));
+    if(item.points.length)line.append(sparkline(item.points,end,minutes,step));
+    card.append(line);
+   }
+   $('detail-metrics').append(card);
+  }
+  $('resources').replaceChildren();
+  if(!data.resources.items.length)$('resources').append(node('p',data.resources.status==='unavailable'?'서버 자원 수집 서비스에 연결할 수 없습니다.':'아직 서버 자원 데이터가 없습니다. Alloy 수집 상태를 확인해 주세요.','empty-resource'));
+  for(const host of data.resources.items){
+   const card=node('article',undefined,'resource-card');card.append(node('h3',host.instance));
+   if(host.status!=='ok')card.append(node('p',observationLabels[host.status]||'수집 지연'));
+   const grid=node('div',undefined,'resource-values');
+   for(const [key,label]of [['cpu','CPU'],['memory','메모리'],['disk','루트 디스크']]){
+    const metric=host.history?.[key],e=node('div');
+    e.append(node('span',label),node('b',numeric(host[key],'%')));
+    if(metric?.points?.length)e.append(sparkline(metric.points,end,minutes,step,100));
+    if(metric)e.append(node('small',summaryText(metric.summary,'%'),'metric-summary'));
+    if(metric&&metric.status!=='ok')e.append(node('small',observationLabels[metric.status]||'데이터 없음'));
+    grid.append(e);
+   }
+   card.append(grid);$('resources').append(card);
+  }
+  renderLogs($('nginx-log'),data.logs['portal-nginx']);renderLogs($('app-log'),data.logs['portal-api']);
+ }catch(e){
+  if(g!==generation||!user)return;
+  $('metrics-time').textContent='지표·로그를 가져오지 못했습니다. 새로고침해 주세요.';
+  for(const id of ['metrics','detail-metrics','alert-target-status','resources','nginx-log','app-log'])$(id).replaceChildren();
+ }
 }
-

@@ -3,6 +3,13 @@ import asyncio,json,math,re,time
 from datetime import datetime,timezone
 import httpx
 
+WINDOWS={'15m':(900,30),'1h':(3600,30),'6h':(21600,120),'24h':(86400,300)}
+MAX_POINTS=300
+
+def point_summary(points):
+    values=[v for _,v in points if v is not None]
+    return {'mean':sum(values)/len(values),'max':max(values),'samples':len(values)} if values else {'mean':None,'max':None,'samples':0}
+
 REQUESTS='sum(rate(portal_http_requests{job="portal-otel"}[2m]))'
 METRICS={
  'requests':REQUESTS,
@@ -48,19 +55,25 @@ def safe_log(raw):
 
 class Observer:
     def __init__(self,settings):
-        self.settings=settings;self.cached=None;self.cached_at=0;self.lock=asyncio.Lock()
+        self.settings=settings;self.cache={};self.lock=asyncio.Lock()
 
-    async def snapshot(self):
+    async def snapshot(self,window='15m'):
+        if window not in WINDOWS: raise ValueError('INVALID_WINDOW')
         async with self.lock:
-            if self.cached is not None and time.monotonic()-self.cached_at<15: return self.cached
+            cached=self.cache.get(window)
+            if cached and time.monotonic()-cached[0]<15: return cached[1]
             async with httpx.AsyncClient(timeout=3,trust_env=False) as client:
-                result=await self.collect(client)
-            self.cached=result;self.cached_at=time.monotonic();return result
+                result=await self.collect(client,window=window)
+            self.cache[window]=(time.monotonic(),result)
+            return result
 
-    async def collect(self,client,end=None):
-        end=end or time.time(); start=end-900
+    async def collect(self,client,end=None,window='15m'):
+        if window not in WINDOWS: raise ValueError('INVALID_WINDOW')
+        seconds,step=WINDOWS[window]
+        end=time.time() if end is None else end
+        start=end-seconds
         async def prom(expr,range_query=False):
-            params={'query':expr,'start':start,'end':end,'step':30} if range_query else {'query':expr,'time':end}
+            params={'query':expr,'start':start,'end':end,'step':step} if range_query else {'query':expr,'time':end}
             async with asyncio.timeout(4):
                 response=await client.get(self.settings.prometheus_url.rstrip('/')+'/api/v1/'+('query_range' if range_query else 'query'),params=params)
                 response.raise_for_status(); data=response.json()
@@ -80,12 +93,13 @@ class Observer:
                 return rows[:20]
         async def loki_metric(expr):
             async with asyncio.timeout(4):
-                response=await client.get(self.settings.loki_url.rstrip('/')+'/loki/api/v1/query_range',params={'query':expr,'start':start,'end':end,'step':30,'direction':'forward','limit':1000})
+                response=await client.get(self.settings.loki_url.rstrip('/')+'/loki/api/v1/query_range',params={'query':expr,'start':start,'end':end,'step':step,'direction':'forward','limit':1000})
                 response.raise_for_status();data=response.json()
                 if data.get('status')!='success': raise ValueError('QUERY_FAILED')
                 return data['data']['result']
         tasks={'source':prom('max(timestamp(portal_http_requests{job="portal-otel"}))'),'node_source':prom('max by (instance) (timestamp(node_memory_MemTotal_bytes{job="ec2-node"}))')}
         tasks.update({key:prom(expr,True) for key,expr in METRICS.items()});tasks.update({key:prom(expr) for key,expr in RESOURCE.items()})
+        tasks.update({'history_'+key:prom(expr,True) for key,expr in RESOURCE.items()})
         tasks.update({service:logs(service) for service in ['portal-api','portal-nginx']})
         tasks.update({'detail_'+key:prom(expr,True) for key,expr in DETAIL_PROM.items()})
         tasks.update({'detail_'+key:loki_metric(expr) for key,expr in DETAIL_LOKI.items()})
@@ -101,11 +115,12 @@ class Observer:
         for key in METRICS:
             result=data[key];status='unavailable' if isinstance(result,Exception) or not source_ok else 'stale' if source_stamp is not None and not source_fresh else 'no_data'
             points=[]; value=None
-            if not isinstance(result,Exception) and source_fresh and result:
-                points=[[float(t)*1000,number(v)] for t,v in result[0].get('values',[])][-120:]
-                if points and points[-1][0]/1000>=end-60: value=points[-1][1]
+            if not isinstance(result,Exception) and result:
+                points=[[float(t)*1000,number(v)] for t,v in result[0].get('values',[])][-MAX_POINTS:]
+                if source_fresh and points and points[-1][0]/1000>=end-60:
+                    value=points[-1][1]
                 if value is not None: status='ok'
-            metrics[key]={'status':status,'value':value,'points':points}
+            metrics[key]={'status':status,'value':value,'points':points,'summary':point_summary(points)}
         nodes={};source=data['node_source']
         if not isinstance(source,Exception):
             for row in source[:20]:
@@ -115,6 +130,20 @@ class Observer:
                 for row in data[key][:20]:
                     instance=row['metric'].get('instance','unknown')[:120]
                     if instance in nodes and nodes[instance]['status']=='ok': nodes[instance][key]=number(row['value'][1])
+        for instance,host in nodes.items():
+            history={}
+            for key in RESOURCE:
+                rows=data['history_'+key]
+                points=[]
+                status='unavailable' if isinstance(rows,Exception) else 'no_data'
+                if not isinstance(rows,Exception):
+                    matching=[row for row in rows[:20] if row['metric'].get('instance')==instance]
+                    if matching:
+                        points=[[float(t)*1000,number(v)] for t,v in matching[0].get('values',[])][-MAX_POINTS:]
+                        if any(v is not None for _,v in points):
+                            status='ok' if host['status']=='ok' else 'stale'
+                history[key]={'status':status,'points':points,'value':host[key],'summary':point_summary(points)}
+            host['history']=history
         resource_status='unavailable' if isinstance(source,Exception) else 'ok' if nodes else 'no_data'
         def series(key,label):
             rows=data['detail_'+key]
@@ -125,7 +154,7 @@ class Observer:
                 route=metric.get(label,'')
                 if route not in ROUTES: route='other'
                 points=[]
-                for stamp,value in row.get('values',[])[-30:]:
+                for stamp,value in row.get('values',[])[-MAX_POINTS:]:
                     points.append([float(stamp)*1000,number(value)])
                 if points and points[-1][0]/1000 >= end-60:
                     items.append({'route':route,'value':points[-1][1],'points':points})
@@ -147,5 +176,5 @@ class Observer:
                 job=labels.get('job','')
                 if job not in VISIBLE_JOBS: continue
                 target_rows.append({'job':job,'instance':labels.get('instance','')[:120],'up':number(row['value'][1])==1})
-        return {'as_of':datetime.fromtimestamp(end,timezone.utc).isoformat(),'window_minutes':15,'metrics':metrics,'details':details,'alerts':{'status':'unavailable' if isinstance(alerts,Exception) else 'ok','items':alert_rows},'targets':{'status':'unavailable' if isinstance(targets,Exception) else 'ok','items':target_rows},'resources':{'status':resource_status,'items':list(nodes.values())},'logs':{service:{'status':'unavailable' if isinstance(data[service],Exception) else 'ok','items':[] if isinstance(data[service],Exception) else data[service]} for service in ['portal-api','portal-nginx']}}
+        return {'as_of':datetime.fromtimestamp(end,timezone.utc).isoformat(),'window_minutes':seconds//60,'window':window,'step_seconds':step,'range_start':datetime.fromtimestamp(start,timezone.utc).isoformat(),'metrics':metrics,'details':details,'alerts':{'status':'unavailable' if isinstance(alerts,Exception) else 'ok','items':alert_rows},'targets':{'status':'unavailable' if isinstance(targets,Exception) else 'ok','items':target_rows},'resources':{'status':resource_status,'items':list(nodes.values())},'logs':{service:{'status':'unavailable' if isinstance(data[service],Exception) else 'ok','items':[] if isinstance(data[service],Exception) else data[service]} for service in ['portal-api','portal-nginx']}}
 
