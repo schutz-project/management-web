@@ -31,6 +31,9 @@ jobs:
       - name: Check session restore and navigation behavior
         run: node --test tests/test-session-restore.cjs
 
+      - name: Check HTTP and HTTPS release health
+        run: python3 tests/test_release_health.py
+
       - name: Validate deployment Compose metadata
         run: python3 tests/test_release_compose.py
 

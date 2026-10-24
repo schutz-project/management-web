@@ -26,6 +26,37 @@ web_container=schutz-monitoring-management-web-1
 worker_container=schutz-monitoring-management-worker-1
 db_container=schutz-monitoring-management-db-1
 
+web_health() {
+  local target="${1:?container required}" command
+  command=$(docker inspect "$target" --format '{{json .Config.Cmd}}') || return 1
+  docker exec -i "$target" python - "$command" <<'WEB_HEALTH_PY'
+import json, ssl, sys, urllib.request
+
+args = json.loads(sys.argv[1])
+def option(name, default=None):
+    return args[args.index(name) + 1] if name in args else default
+
+port = int(option("--port", "8000"))
+if not 1 <= port <= 65535:
+    raise ValueError("INVALID_HEALTH_PORT")
+cert = option("--ssl-certfile")
+handlers = [urllib.request.ProxyHandler({})]
+scheme = "http"
+if cert:
+    scheme = "https"
+    context = ssl.create_default_context(cafile=cert)
+    # Loopback is the transport address, not the public certificate hostname.
+    # Trust only the configured certificate/chain; never disable TLS verification.
+    context.check_hostname = False
+    context.verify_flags |= ssl.VERIFY_X509_PARTIAL_CHAIN
+    handlers.append(urllib.request.HTTPSHandler(context=context))
+opener = urllib.request.build_opener(*handlers)
+with opener.open(f"{scheme}://127.0.0.1:{port}/health", timeout=5) as response:
+    if response.status != 200:
+        raise ValueError("WEB_HEALTH_HTTP_FAILED")
+WEB_HEALTH_PY
+}
+
 wait_healthy() {
   local deadline=$((SECONDS + 180)) passes=0 logs
   while (( SECONDS < deadline )); do
@@ -34,7 +65,7 @@ wait_healthy() {
           $(docker inspect "$web_container" --format '{{.RestartCount}}' 2>/dev/null) == 0 &&
           $(docker inspect "$worker_container" --format '{{.RestartCount}}' 2>/dev/null) == 0 &&
           $(docker inspect "$db_container" --format '{{.State.Health.Status}}' 2>/dev/null) == healthy ]] &&
-       docker exec "$web_container" python -c 'import urllib.request; assert urllib.request.urlopen("http://127.0.0.1:8000/health",timeout=5).status == 200' >/dev/null 2>&1; then
+       web_health "$web_container" >/dev/null 2>&1; then
       logs=$(docker logs --since 180s "$worker_container" 2>&1) || logs=''
       if [[ "$logs" == *'probe collection complete'* &&
             "$logs" == *'login event collection complete'* &&
@@ -231,7 +262,7 @@ sleep 10
 [[ $(docker inspect "$web_container" --format '{{.Config.Image}}') == "$new_web" ]]
 [[ $(docker inspect "$worker_container" --format '{{.Config.Image}}') == "$new_worker" ]]
 [[ $(docker inspect "$db_container" --format '{{.State.Health.Status}}') == healthy ]]
-docker exec "$web_container" python -c 'import urllib.request; assert urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=5).status == 200'
+web_health "$web_container"
 [[ $(docker inspect "$web_container" --format '{{.Id}}') != "$before_web_id" ]]
 [[ $(docker inspect "$worker_container" --format '{{.Id}}') != "$before_worker_id" ]]
 [[ $(docker inspect "$db_container" --format '{{.Id}}') == "$before_db_id" ]]
