@@ -23,6 +23,14 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v6
 
+      - name: Set up Node.js for browser state regression tests
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Check session restore and navigation behavior
+        run: node --test tests/test-session-restore.cjs
+
       - name: Build Management Web image
         run: docker build -t schutz-management-web:ci .
 
