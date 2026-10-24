@@ -31,6 +31,9 @@ jobs:
       - name: Check session restore and navigation behavior
         run: node --test tests/test-session-restore.cjs
 
+      - name: Validate deployment Compose metadata
+        run: python3 tests/test_release_compose.py
+
       - name: Build Management Web image
         run: docker build -t schutz-management-web:ci .
 
