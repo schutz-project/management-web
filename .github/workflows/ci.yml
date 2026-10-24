@@ -40,6 +40,13 @@ jobs:
           schutz-management-web:ci
           python -c "import management.web; print('Management Web import OK')"
 
+      - name: Check observability parity and partial failures
+        run: >
+          docker run --rm --network none
+          -v "$PWD/tests:/tests:ro"
+          schutz-management-web:ci
+          python -m unittest discover -s /tests -p test_observability_parity.py
+
   publish-ecr:
     name: Publish image to ECR
     needs: [docker-check]
@@ -110,3 +117,4 @@ jobs:
           PUBLISHED_IMAGE: ${{ needs.publish-ecr.outputs.image }}
           GH_TOKEN: ${{ github.token }}
         run: python3 deploy/auto-release.py
+
