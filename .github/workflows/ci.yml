@@ -31,6 +31,9 @@ jobs:
       - name: Check session restore and navigation behavior
         run: node --test tests/test-session-restore.cjs
 
+      - name: Check integrated monitoring UI
+        run: node --test tests/test-monitoring-ui.cjs
+
       - name: Check HTTP and HTTPS release health
         run: python3 tests/test_release_health.py
 
@@ -123,4 +126,3 @@ jobs:
           PUBLISHED_IMAGE: ${{ needs.publish-ecr.outputs.image }}
           GH_TOKEN: ${{ github.token }}
         run: python3 deploy/auto-release.py
-
