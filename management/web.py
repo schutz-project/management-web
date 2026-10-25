@@ -43,7 +43,7 @@ def create_app(settings=None,engine=None,metric_readers=None,observer=None):
         return {**{k:getattr(row,k) for k in ['id','target_id','rule_id','status','synthetic','test_run_id','accepted_by','closed_by','resolution','version']},'detected_at':stamp(row.detected_at),'accepted_at':stamp(row.accepted_at),'closed_at':stamp(row.closed_at)}
     @app.get('/')
     @app.get('/incidents/{path_id}')
-    def index(path_id:str=''): return FileResponse(ROOT/'static/manage.html')
+    def index(path_id:str=''): return FileResponse(ROOT/'static/schutz-ui/index.html')
     @app.get('/api/dashboard')
     def dashboard(request:Request):
         with factory.begin() as db:
