@@ -47,3 +47,6 @@
 
 /* Reference correction: semantic line icons in colored circular backgrounds. */
 .service-stat-icon{width:36px;height:36px;background:#e6f3ff;color:#087dff}.service-stat-icon svg{width:23px;height:23px}.service-stat-max{color:#ff4b70;background:#ffedf2}.service-stat-min{color:#12b7ca;background:#e1f9fc}.service-stat-spread{color:#8b5cf6;background:#f1eaff}.service-statistics strong{display:inline-block}.service-stat-time{display:inline-block;font-size:10px;color:#6b82a0;margin-left:5px;white-space:nowrap}.service-statistics>div{min-height:72px}.resource-analysis-stats .resource-stat-icon{width:36px;height:36px;background:#e6f3ff;color:#087dff}.resource-analysis-stats .stat-icon-2{background:#ffedf2;color:#ff4b70}.resource-analysis-stats .stat-icon-3{background:#e1f9fc;color:#12b7ca}.resource-analysis-stats .stat-icon-4{background:#f1eaff;color:#8b5cf6}.resource-stat-icon svg{width:23px;height:23px}
+
+/* Server resource reference palette, independent of service statistics. */
+.resource-analysis-stats .stat-icon-0{background:#f1eaff;color:#8b5cf6}.resource-analysis-stats .stat-icon-1{background:#e6f8eb;color:#16a05a}.resource-analysis-stats .stat-icon-2{background:#fff0e7;color:#f17645}.resource-analysis-stats .stat-icon-3{background:#e0f9fc;color:#13b8cb}.resource-analysis-stats .stat-icon-4{background:#f1eaff;color:#8b5cf6}
