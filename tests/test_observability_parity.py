@@ -2,7 +2,7 @@ import asyncio
 import unittest
 from types import SimpleNamespace
 
-from management.observability import Observer, RESOURCE, WINDOWS, point_summary
+from management.observability import Observer, RESOURCE, WINDOWS, point_summary, custom_bounds
 from unittest.mock import AsyncMock, MagicMock, patch
 
 
@@ -145,6 +145,45 @@ class TimeWindowTests(unittest.IsolatedAsyncioTestCase):
     def test_empty_summary_does_not_invent_zero(self):
         self.assertEqual(point_summary([[1,None]]),{"mean":None,"max":None,"samples":0})
 
+class CustomRangeTests(unittest.IsolatedAsyncioTestCase):
+    def settings(self): return SimpleNamespace(prometheus_url="http://prometheus:9090",loki_url="http://loki:3100")
+
+    async def test_bounds_and_timezone_validation(self):
+        start="2026-10-25T10:00:00+09:00"
+        end="2026-10-25T11:00:00+09:00"
+        # Use an explicit test clock rather than the execution date.
+        from datetime import datetime
+        current=datetime.fromisoformat("2026-10-25T12:00:00+09:00").timestamp()
+        a,b,step=custom_bounds(start,end,now=current)
+        self.assertEqual(b-a,3600)
+        self.assertLessEqual(int((b-a)//step)+1,300)
+        for x,y in [(end,start),(start,"2026-10-27T11:00:00+09:00"),("2026-10-01T10:00:00+09:00",end),("2026-10-25T10:00:00",end),(None,end),(start,"2026-10-25T13:00:00+09:00")]:
+            with self.subTest(x=x,y=y),self.assertRaises(ValueError): custom_bounds(x,y,now=current)
+
+    async def test_historical_metrics_keep_alerts_targets_and_logs_current(self):
+        from datetime import datetime
+        current=datetime.fromisoformat("2026-10-25T12:00:00+09:00").timestamp()
+        client=ResourceClient()
+        with patch("management.observability.time.time",return_value=current):
+            result=await Observer(self.settings()).collect(client,window="custom",start="2026-10-25T10:00:00+09:00",end="2026-10-25T11:00:00+09:00")
+        self.assertTrue(result["historical"])
+        for url,p in client.calls:
+            if "step" in p:
+                self.assertEqual(p["end"],current-3600)
+                self.assertLessEqual(int((p["end"]-p["start"])//p["step"])+1,300)
+            if p["query"] in ['up','ALERTS{alertstate="firing"}']: self.assertEqual(p["time"],current)
+            if p["query"]=='{service="portal-api"}': self.assertEqual(p["end"],int(current*1e9))
+
+    async def test_custom_cache_is_bounded_and_distinguishes_ranges(self):
+        from datetime import datetime
+        current=datetime.fromisoformat("2026-10-25T12:00:00+09:00").timestamp()
+        observer=Observer(self.settings());observer.collect=AsyncMock(return_value={"historical":True})
+        manager=MagicMock();manager.__aenter__=AsyncMock();manager.__aexit__=AsyncMock(return_value=False)
+        with patch("management.observability.time.time",return_value=current),patch("management.observability.httpx.AsyncClient",return_value=manager):
+            for hour in [10,10,9]:
+                await observer.snapshot(window="custom",start=f"2026-10-25T{hour:02}:00:00+09:00",end="2026-10-25T11:00:00+09:00")
+        self.assertEqual(observer.collect.await_count,2)
+        self.assertEqual(len(observer.cache),1)
+
 if __name__ == "__main__":
     unittest.main()
-

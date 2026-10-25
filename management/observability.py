@@ -6,6 +6,23 @@ import httpx
 WINDOWS={'15m':(900,30),'1h':(3600,30),'6h':(21600,120),'24h':(86400,300)}
 MAX_POINTS=300
 
+CUSTOM_MAX_SECONDS=86400
+CUSTOM_RETENTION_SECONDS=7*86400
+
+def custom_bounds(start,end,now=None):
+    try:
+        a=datetime.fromisoformat(start.replace('Z','+00:00'))
+        b=datetime.fromisoformat(end.replace('Z','+00:00'))
+        if a.tzinfo is None or b.tzinfo is None: raise ValueError()
+        a,b=a.timestamp(),b.timestamp()
+    except (ValueError,TypeError,AttributeError,OverflowError):
+        raise ValueError('INVALID_RANGE') from None
+    current=time.time() if now is None else now
+    if not (math.isfinite(a) and math.isfinite(b) and 60<=b-a<=CUSTOM_MAX_SECONDS and a>=current-CUSTOM_RETENTION_SECONDS and b<=current+5):
+        raise ValueError('INVALID_RANGE')
+    step=max(30,math.ceil((b-a)/(MAX_POINTS-1)))
+    return a,b,step
+
 def point_summary(points):
     values=[v for _,v in points if v is not None]
     return {'mean':sum(values)/len(values),'max':max(values),'samples':len(values)} if values else {'mean':None,'max':None,'samples':0}
@@ -57,23 +74,30 @@ class Observer:
     def __init__(self,settings):
         self.settings=settings;self.cache={};self.lock=asyncio.Lock()
 
-    async def snapshot(self,window='15m'):
-        if window not in WINDOWS: raise ValueError('INVALID_WINDOW')
+    async def snapshot(self,window='15m',start=None,end=None):
+        bounds=custom_bounds(start,end) if window=='custom' else None
+        if window not in WINDOWS and window!='custom': raise ValueError('INVALID_WINDOW')
+        if window!='custom' and (start is not None or end is not None): raise ValueError('INVALID_RANGE')
         async with self.lock:
             cached=self.cache.get(window)
-            if cached and time.monotonic()-cached[0]<15: return cached[1]
+            if cached and time.monotonic()-cached[0]<15 and (window!='custom' or cached[2]==bounds[:2]): return cached[1]
             async with httpx.AsyncClient(timeout=3,trust_env=False) as client:
-                result=await self.collect(client,window=window)
-            self.cache[window]=(time.monotonic(),result)
+                result=await self.collect(client,window=window,start=start,end=end) if window=='custom' else await self.collect(client,window=window)
+            self.cache[window]=(time.monotonic(),result,bounds[:2] if bounds else None)
             return result
 
-    async def collect(self,client,end=None,window='15m'):
-        if window not in WINDOWS: raise ValueError('INVALID_WINDOW')
-        seconds,step=WINDOWS[window]
-        end=time.time() if end is None else end
-        start=end-seconds
-        async def prom(expr,range_query=False):
-            params={'query':expr,'start':start,'end':end,'step':step} if range_query else {'query':expr,'time':end}
+    async def collect(self,client,end=None,window='15m',start=None):
+        if window=='custom':
+            start,end,step=custom_bounds(start,end)
+            seconds=end-start
+        else:
+            if window not in WINDOWS: raise ValueError('INVALID_WINDOW')
+            seconds,step=WINDOWS[window]
+            end=time.time() if end is None else end
+            start=end-seconds
+        live_end=time.time() if window=='custom' else end
+        async def prom(expr,range_query=False,current=False):
+            params={'query':expr,'start':start,'end':end,'step':step} if range_query else {'query':expr,'time':live_end if current else end}
             async with asyncio.timeout(4):
                 response=await client.get(self.settings.prometheus_url.rstrip('/')+'/api/v1/'+('query_range' if range_query else 'query'),params=params)
                 response.raise_for_status(); data=response.json()
@@ -81,7 +105,7 @@ class Observer:
                 return data['data']['result']
         async def logs(service):
             async with asyncio.timeout(4):
-                response=await client.get(self.settings.loki_url.rstrip('/')+'/loki/api/v1/query_range',params={'query':'{service="'+service+'"}','start':int((end-300)*1e9),'end':int(end*1e9),'limit':20,'direction':'backward'})
+                response=await client.get(self.settings.loki_url.rstrip('/')+'/loki/api/v1/query_range',params={'query':'{service="'+service+'"}','start':int((live_end-300)*1e9),'end':int(live_end*1e9),'limit':20,'direction':'backward'})
                 response.raise_for_status();data=response.json()
                 if data.get('status')!='success': raise ValueError('QUERY_FAILED')
                 rows=[]
@@ -103,8 +127,8 @@ class Observer:
         tasks.update({service:logs(service) for service in ['portal-api','portal-nginx']})
         tasks.update({'detail_'+key:prom(expr,True) for key,expr in DETAIL_PROM.items()})
         tasks.update({'detail_'+key:loki_metric(expr) for key,expr in DETAIL_LOKI.items()})
-        tasks['firing_alerts']=prom('ALERTS{alertstate="firing"}')
-        tasks['scrape_targets']=prom('up')
+        tasks['firing_alerts']=prom('ALERTS{alertstate="firing"}',current=True)
+        tasks['scrape_targets']=prom('up',current=True)
         results=await asyncio.gather(*tasks.values(),return_exceptions=True); data=dict(zip(tasks,results))
         def fresh(stamp):
             value=number(stamp);return value is not None and -5<=end-value<=60
@@ -117,7 +141,7 @@ class Observer:
             points=[]; value=None
             if not isinstance(result,Exception) and result:
                 points=[[float(t)*1000,number(v)] for t,v in result[0].get('values',[])][-MAX_POINTS:]
-                if source_fresh and points and points[-1][0]/1000>=end-60:
+                if source_fresh and points and points[-1][0]/1000>=end-max(60,step):
                     value=points[-1][1]
                 if value is not None: status='ok'
             metrics[key]={'status':status,'value':value,'points':points,'summary':point_summary(points)}
@@ -156,7 +180,7 @@ class Observer:
                 points=[]
                 for stamp,value in row.get('values',[])[-MAX_POINTS:]:
                     points.append([float(stamp)*1000,number(value)])
-                if points and points[-1][0]/1000 >= end-60:
+                if points and points[-1][0]/1000 >= end-max(60,step):
                     items.append({'route':route,'value':points[-1][1],'points':points})
             items.sort(key=lambda item:(item['route'], item['value'] is None))
             return {'status':'ok','items':items[:12]}
@@ -176,5 +200,4 @@ class Observer:
                 job=labels.get('job','')
                 if job not in VISIBLE_JOBS: continue
                 target_rows.append({'job':job,'instance':labels.get('instance','')[:120],'up':number(row['value'][1])==1})
-        return {'as_of':datetime.fromtimestamp(end,timezone.utc).isoformat(),'window_minutes':seconds//60,'window':window,'step_seconds':step,'range_start':datetime.fromtimestamp(start,timezone.utc).isoformat(),'metrics':metrics,'details':details,'alerts':{'status':'unavailable' if isinstance(alerts,Exception) else 'ok','items':alert_rows},'targets':{'status':'unavailable' if isinstance(targets,Exception) else 'ok','items':target_rows},'resources':{'status':resource_status,'items':list(nodes.values())},'logs':{service:{'status':'unavailable' if isinstance(data[service],Exception) else 'ok','items':[] if isinstance(data[service],Exception) else data[service]} for service in ['portal-api','portal-nginx']}}
-
+        return {'as_of':datetime.fromtimestamp(end,timezone.utc).isoformat(),'current_as_of':datetime.fromtimestamp(live_end,timezone.utc).isoformat(),'historical':window=='custom','window_minutes':seconds//60,'window':window,'step_seconds':step,'range_start':datetime.fromtimestamp(start,timezone.utc).isoformat(),'metrics':metrics,'details':details,'alerts':{'status':'unavailable' if isinstance(alerts,Exception) else 'ok','items':alert_rows},'targets':{'status':'unavailable' if isinstance(targets,Exception) else 'ok','items':target_rows},'resources':{'status':resource_status,'items':list(nodes.values())},'logs':{service:{'status':'unavailable' if isinstance(data[service],Exception) else 'ok','items':[] if isinstance(data[service],Exception) else data[service]} for service in ['portal-api','portal-nginx']}}
