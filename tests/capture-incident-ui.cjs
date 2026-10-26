@@ -67,9 +67,9 @@ const server=http.createServer((req,res)=>{const url=new URL(req.url,'http://loc
  incident.evidence=[{id:'prom:fixture:1',kind:'prometheus',occurred_at:'2026-10-26T04:09:00Z',payload:{rule_id:'monitoring_target_down',state:'normal'}}];
  const beforeClosedPosts=posts.length;
  for(const viewport of [{width:1440,height:1000},{width:1280,height:900}]){
-  await page.setViewportSize(viewport);await page.goto(base+'/#view=incidents&incident='+id);
+  await page.setViewportSize(viewport);
   // Open through the ordinary list to avoid depending on deep-link parameter names.
-  await page.goto(base+'/#view=incidents');await page.getByRole('button',{name:'상세 보기 →'}).first().click();
+  await page.goto(base+'/#view=incidents&status=closed');await page.getByRole('button',{name:'상세 보기 →'}).first().click();
   await page.locator('.incident-prometheus-summary').waitFor();
   const panel=page.locator('.incident-prometheus-summary'),value=await panel.textContent();
   assert(value.includes('종료 전 저장 근거')&&value.includes('정상 지표 확인'));
