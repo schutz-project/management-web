@@ -21,7 +21,7 @@ function modal(title,content,key){
  const entering=!state.overlay;
  if(entering)state.overlay=key||'info-'+(++overlaySequence);
  overlays.set(state.overlay,{title,content});
- detail.classList.toggle('incident-dialog',state.overlay?.startsWith('incident-'));$('#detail-title').textContent=title;const body=$('#detail-body');body.replaceChildren();body.append(typeof content==='string'?E('p',content):content);
+ detail.classList.toggle('incident-dialog',state.overlay?.startsWith('incident-'));$('#detail-close').hidden=!!content?.classList?.contains('incident-workspace');$('#detail-title').textContent=title;const body=$('#detail-body');body.replaceChildren();body.append(typeof content==='string'?E('p',content):content);
  if(!detail.open)detail.showModal();if(entering)remember(true,true);
 }
 function closeOverlay(){
@@ -244,13 +244,13 @@ async function copyIncidentID(id,control,note,input){
 }
 function currentIncidentStatus(d){
  const box=E('section',undefined,'incident-current-status');box.append(E('h3','현재 조회 상태 · 과거 근거와 별도'));
- const result=d.current_view,at=result?.data?.as_of,server=result?.data?.servers?.find(v=>v.target_id===d.target_id);
- box.append(E('p','출처: 관리 DB의 최근 Worker 기능 점검 · 조회 '+contextDate(at)+' (KST)','read-muted'));
- if(result?.status!=='ok')box.append(E('p','현재 상태 조회 실패 · 미확인','read-note'));
- else if(!server)box.append(E('p','현재 서비스 기능 상태 미확인 · 해당 사건 대상과 연결된 기능 점검 정보가 없습니다.','read-note'));
- else{const known=typeof server.last_checked_at==='string'&&Number.isFinite(Date.parse(server.last_checked_at))&&!server.collection_delayed&&state.mode.mode!=='snapshot';box.append(statusBadge('기능 점검 '+(known?name(server.status):'미확인'),known&&server.status==='normal'?'success':'unknown'),E('p','표본 시각 '+contextDate(server.last_checked_at)+' (KST)'));if(server.collection_delayed)box.append(E('p','수집 지연 · 과거 표본을 현재 정상으로 해석하지 않습니다.','read-muted'))}
- if(d.monitoring){const m=d.monitoring;box.append(E('h4','Prometheus 경보'),E('p',m.alert_name||'경보 정보 미확인'),E('p','상태: '+({firing:'발생 중',pending:'발생 대기',normal:'정상 지표 확인',unknown:'수집 미확인'}[m.state]||'미확인')),E('p','마지막 평가 '+contextDate(m.last_evaluated_at)+' (KST)'),E('p',m.recovery_confirmed?'복구 신호 확인 · 조치 기록 후 관리자 확인 필요':'복구 조건 미충족 또는 확인 필요'))}
- return box;
+ const result=d.current_view,at=result?.data?.as_of,server=result?.data?.servers?.find(v=>v.target_id===d.target_id),layout=E('div',undefined,'incident-current-layout'),current=E('div',undefined,'incident-current-summary');
+ if(result?.status!=='ok')current.append(E('p','현재 상태 조회 실패 · 미확인','read-note'));
+ else if(!server)current.append(E('p','현재 서비스 기능 상태 미확인 · 해당 사건 대상과 연결된 기능 점검 정보가 없습니다.','read-note'));
+ else{const known=typeof server.last_checked_at==='string'&&Number.isFinite(Date.parse(server.last_checked_at))&&!server.collection_delayed&&state.mode.mode!=='snapshot';current.append(statusBadge('기능 점검 '+(known?name(server.status):'미확인'),known&&server.status==='normal'?'success':'unknown'));if(server.collection_delayed)current.append(E('p','수집 지연 · 과거 표본을 현재 정상으로 해석하지 않습니다.','read-muted'))}
+ const metadata=E('dl',undefined,'incident-status-meta');for(const[label,value]of [['관측 시각',contextDate(server?.last_checked_at)+' (KST)'],['조회 시각',contextDate(at)+' (KST)'],['출처','관리 DB · 최근 Worker 기능 점검']])metadata.append(E('dt',label),E('dd',value));current.append(metadata);layout.append(current);
+ if(d.monitoring){const m=d.monitoring,prom=E('div',undefined,'incident-prometheus-summary');prom.append(E('h4','Prometheus 경보'),E('b',m.alert_name||'경보 정보 미확인'),E('p','상태: '+({firing:'발생 중',pending:'발생 대기',normal:'정상 지표 확인',unknown:'수집 미확인'}[m.state]||'미확인')));const meta=E('dl',undefined,'incident-status-meta');meta.append(E('dt','마지막 평가'),E('dd',contextDate(m.last_evaluated_at)+' (KST)'));prom.append(meta,E('p',m.recovery_confirmed?'복구 신호 확인 · 조치 기록 후 관리자 확인 필요':'복구 조건 미충족 또는 확인 필요','read-note'));layout.append(prom)}
+ box.append(layout);return box;
 }
 function evidencePanel(d){
  const panel=E('section',undefined,'incident-evidence-panel');panel.append(E('h3','탐지 근거'),E('p','사건에 연결된 서버 반환 근거입니다. 기본 최근 5건 · API 최대 100건 · 전체 보기는 이번 응답 범위입니다.','read-muted'));
@@ -261,10 +261,10 @@ function cacheIncidentDraft(id){const action=$('#action-content'),resolution=$('
 function restoreIncidentDraft(id){const draft=incidentDrafts.get(id);if(!draft)return;const action=$('#action-content'),resolution=$('#resolution'),check=$('#test-stopped');if(action)action.value=draft.action;if(resolution)resolution.value=draft.resolution;if(check){check.checked=draft.stopped;check.onchange?.()}if((!action&&draft.action)||(!resolution&&draft.resolution)){const saved=E('details');saved.append(E('summary','저장되지 않은 입력 보기'),E('p',draft.action||draft.resolution));$('#detail-body').append(saved)}}
 function incidentDetail(d){
  const root=E('div',undefined,'incident-workspace'),jobs=d.jobs||[],ai=jobs.find(j=>j.kind==='ai');
- const back=button('← 목록으로 돌아가기',returnToIncidentList);back.className='incident-back outline';root.append(back);
+ const nav=E('nav',undefined,'incident-detail-nav');nav.setAttribute('aria-label','사건 상세 이동');const back=button('← 목록으로 돌아가기',returnToIncidentList);back.className='incident-back outline';nav.append(back,button('화면 닫기',closeOverlay));root.append(nav);
  const header=E('section',undefined,'incident-detail-header'),heading=E('div',undefined,'incident-title-row');heading.append(E('h2',(d.synthetic?'[모의] ':'')+name(d.rule_id)),statusBadge(name(d.status),d.status==='closed'?'success':'info'),statusBadge(severityLabel(d.severity),d.severity==='critical'?'failed':d.severity==='warning'?'pending':'unknown'));root.append(header);header.append(heading,E('p',(d.target_display||name(d.target_id))+' · '+d.rule_id));
- const idRow=E('div',undefined,'incident-id-row'),input=E('input');input.value=d.id;input.readOnly=true;input.setAttribute('aria-label','전체 사건 ID');const copied=E('p',undefined,'read-muted');copied.setAttribute('role','status');const copy=button('ID 복사',()=>copyIncidentID(d.id,copy,copied,input));idRow.append(E('b','사건 ID'),input,copy);header.append(idRow,copied,E('p','탐지 '+contextDate(d.detected_at)+' · 종료 '+contextDate(d.closed_at)+' (KST)','read-muted'));
- const upper=E('div',undefined,'incident-detail-grid'),guide=E('section',undefined,'incident-judgement');guide.append(E('h3','운영 판단 안내'),E('p','경보 상태, AI 분석, Slack 전송, 사건 종료는 각각 별도입니다. 관리자 근거 검토 후 접수·조치·종료합니다.','read-note'));upper.append(currentIncidentStatus(d),guide);root.append(upper);
+ const idRow=E('div',undefined,'incident-id-row'),input=E('textarea');input.rows=2;input.value=d.id;input.readOnly=true;input.setAttribute('aria-label','전체 사건 ID');const copied=E('p',undefined,'read-muted');copied.setAttribute('role','status');const copy=button('ID 복사',()=>copyIncidentID(d.id,copy,copied,input));idRow.append(E('b','사건 ID'),input,copy);header.append(idRow,copied,E('p','탐지 '+contextDate(d.detected_at)+' · 종료 '+contextDate(d.closed_at)+' (KST)','read-muted'));
+ const upper=E('div',undefined,'incident-detail-overview'),guide=E('section',undefined,'incident-judgement');guide.append(E('h3','운영 판단 안내'),E('p','경보 상태, AI 분석, Slack 전송, 사건 종료는 각각 별도입니다. 관리자 근거 검토 후 접수·조치·종료합니다.','read-note'));upper.append(currentIncidentStatus(d),guide);root.append(upper);
  const context=incidentContext(d,ai);context.append(E('p','과거 이력 기능 상태 미확인 · Web 응답만으로 Worker 설정을 확정하지 않습니다.','read-muted'));root.append(context);
  const grid=E('div',undefined,'incident-detail-grid');grid.append(renderAIJob(ai),renderSlackJobs(jobs));root.append(grid,evidencePanel(d));
  const actions=E('section',undefined,'incident-action-section');actions.append(E('h3','접수 · 조치 기록'),E('p','초안은 제안이며 실제 수행 내용을 검토한 뒤 직접 저장합니다. 화면 닫기는 사건 종료가 아닙니다.','read-note'));
@@ -282,7 +282,7 @@ function incidentDetail(d){
   const close=button('사건 종료',()=>form.requestSubmit());close.classList.add('close-incident-action');close.disabled=!eligible||!!check&&!check.checked;close.setAttribute('aria-describedby','closure-policy');if(check)check.onchange=()=>{close.disabled=!eligible||!check.checked};
   const policy=E('p','서버가 권한·조치 기록·복구·시험 종료 조건을 최종 검증합니다.','read-muted');policy.id='closure-policy';form.append(policy,close);form.onsubmit=e=>{e.preventDefault();if(!eligible){feedback('종료 조건을 먼저 확인해주세요.',true);return}if(!field.value.trim()||(check&&!check.checked)){feedback('종료 근거와 시험 종료 확인을 입력해주세요.',true);return}const payload={resolution:field.value};if(check)payload.test_stopped=check.checked;mutate(d.id,'close',payload)};closure.append(form)
  }else if(d.status!=='closed')closure.append(E('p','접수와 조치 기록 후 복구 조건을 확인하고 종료할 수 있습니다.','read-muted'));
- closure.append(button('화면 닫기',closeOverlay));root.append(closure);
+ root.append(closure);
  modal('사건 상세',root);restoreIncidentDraft(d.id);if(window.SchutzDrafts&&writable)window.SchutzDrafts.attach(d,api);$('#detail-title').tabIndex=-1;$('#detail-title').focus?.();
 }
 async function mutate(id,kind,payload){

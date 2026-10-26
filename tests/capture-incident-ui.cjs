@@ -29,20 +29,37 @@ const server=http.createServer((req,res)=>{const url=new URL(req.url,'http://loc
 });
 (async()=>{await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const base='http://127.0.0.1:'+server.address().port;const browser=await chromium.launch({headless:true});try{
  const context=await browser.newContext({viewport:{width:1440,height:1000},locale:'ko-KR'});const page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));
- await page.goto(base+'/#view=incidents');await page.getByRole('button',{name:'상세 보기 →'}).first().waitFor();await page.screenshot({path:path.join(out,'01-list-desktop.png'),fullPage:true});
- assert.equal(await page.locator('.incident-table th').count(),9);checks.push('목록 9개 열 및 서버 총건수 표시');
- await page.getByRole('button',{name:'상세 보기 →'}).first().click();await page.locator('.incident-workspace').waitFor();await page.screenshot({path:path.join(out,'02-detail-top.png')});
- for(const selector of ['.context-history','.incident-ai-card','.incident-slack-card','.incident-evidence-panel','.incident-action-section','.incident-closure-section']){const el=page.locator(selector);await el.scrollIntoViewIfNeeded();await el.screenshot({path:path.join(out,selector.slice(1)+'.png')});}
- assert.equal(await page.locator('.slack-delivery-row').count(),3);assert.equal(await page.getByLabel('전체 사건 ID').inputValue(),id);checks.push('Slack 3종·전체 사건 ID 표시');
+ await page.goto(base+'/#view=incidents');await page.getByRole('button',{name:'상세 보기 →'}).first().waitFor();
+ for(const viewport of [{width:1440,height:1000},{width:1280,height:900}]){
+  const prefix=String(viewport.width);await page.setViewportSize(viewport);
+  const listBox=await page.locator('.incident-table-scroll').first().evaluate(e=>({width:e.clientWidth,scroll:e.scrollWidth}));assert(listBox.scroll<=listBox.width+1,prefix+' 목록 표 가로 잘림');
+  await page.screenshot({path:path.join(out,prefix+'-01-list.png'),fullPage:true});
+  assert.equal(await page.locator('.incident-table th').count(),9);assert.equal(await page.locator('.incident-count-card').count(),4);
+  await page.getByRole('button',{name:'상세 보기 →'}).first().click();await page.locator('.incident-workspace').waitFor();
+  assert.equal(await page.getByRole('button',{name:'화면 닫기',exact:true}).count(),1);assert.equal(await page.locator('#detail-close').isVisible(),false);
+  const guide=await page.locator('.incident-judgement').boundingBox();assert(guide.height<160,prefix+' 운영 판단 과도한 여백');
+  const overflow=await page.locator('#detail').evaluate(e=>({width:e.clientWidth,scroll:e.scrollWidth}));assert(overflow.scroll<=overflow.width+1,prefix+' 상세 가로 잘림');
+  await page.screenshot({path:path.join(out,prefix+'-02-detail-top.png')});
+  for(const selector of ['.context-history','.incident-ai-card','.incident-slack-card','.incident-evidence-panel','.incident-action-section','.incident-closure-section']){const el=page.locator(selector);await el.scrollIntoViewIfNeeded();await el.screenshot({path:path.join(out,prefix+'-'+selector.slice(1)+'.png')});}
+  assert.equal(await page.locator('.slack-delivery-row').count(),3);assert.equal(await page.getByLabel('전체 사건 ID').inputValue(),id);
+  const buttons=await page.locator('.incident-action-section form>button,.incident-closure-section form>button,.draft-panel>button').evaluateAll(es=>es.filter(e=>e.getClientRects().length).map(e=>({text:e.textContent,height:e.getBoundingClientRect().height,x:e.getBoundingClientRect().x})));
+  assert(buttons.every(b=>b.height>=44));const save=buttons.find(b=>b.text==='조치 기록 저장'),close=buttons.find(b=>b.text==='사건 종료');assert(Math.abs(save.x-close.x)<2,prefix+' 저장·종료 정렬');
+  checks.push(prefix+'px: 목록 9열·요약 4개, 표/상세 가로 잘림 없음, 닫기 단일 노출, 상단 안내 여백 축소, 버튼 44px·정렬 통과');
+  await page.getByRole('button',{name:'← 목록으로 돌아가기',exact:true}).click();await page.locator('.incident-table').waitFor();
+ }
+ await page.setViewportSize({width:1440,height:1000});
+ await page.getByLabel('사건 검색',{exact:true}).fill('FastAPI');await page.getByLabel('심각도 필터',{exact:true}).selectOption('warning');await page.getByLabel('사건 상태 필터',{exact:true}).selectOption('in_progress');await page.getByRole('button',{name:'검색 적용',exact:true}).click();await page.waitForFunction(()=>document.querySelector('.incident-list-count')?.textContent.includes('총 1건'));
+ assert(page.url().includes('q=FastAPI')&&page.url().includes('severity=warning'));checks.push('데스크톱 검색·심각도·상태 필터 및 서버 총 1건 표시');
+ await page.getByRole('button',{name:'상세 보기 →'}).first().click();await page.locator('.incident-workspace').waitFor();
  await page.getByRole('button',{name:'조치 초안 자동 작성',exact:true}).click();await page.waitForFunction(()=>document.querySelector('#action-content')?.value.length>0);assert.equal(posts.length,0);checks.push('기존 초안 작성은 입력만 수행·자동 저장 없음');
  await page.getByLabel('조치 내용',{exact:true}).fill('409 충돌 후에도 유지할 조치 초안');await page.getByRole('button',{name:'조치 기록 저장',exact:true}).click();await page.getByText(/최신 상태를 다시 조회했습니다/).waitFor();assert.equal(await page.getByLabel('조치 내용',{exact:true}).inputValue(),'409 충돌 후에도 유지할 조치 초안');assert.equal(posts.length,1);checks.push('409 단일 요청·최신 상세 조회·조치 입력 보존');
- await page.getByRole('button',{name:'← 목록으로 돌아가기',exact:true}).click();await page.locator('.incident-table').waitFor();checks.push('상세에서 사건 목록 복귀');await page.getByRole('button',{name:'상세 보기 →'}).first().click();await page.locator('.incident-workspace').waitFor();await page.getByRole('button',{name:'원본 사건 상세 보기',exact:true}).click();await page.waitForFunction(()=>document.querySelector('.incident-id-row input')?.value==='22222222-2222-4222-8222-222222222222');await page.goBack();await page.waitForFunction(()=>document.querySelector('.incident-id-row input')?.value==='11111111-1111-4111-8111-111111111111');checks.push('과거 원본 조회 및 브라우저 뒤로가기 복귀');await page.getByRole('button',{name:'← 목록으로 돌아가기',exact:true}).click();await page.locator('.incident-table').waitFor();
- incident.closure={eligible:false,reasons:['TWO_HEALTHY_CHECKS_REQUIRED']};await page.getByRole('button',{name:'상세 보기 →'}).first().click();await page.locator('.incident-workspace').waitFor();assert.equal(await page.getByRole('button',{name:'사건 종료',exact:true}).isEnabled(),false);checks.push('종료 조건 미충족 시 종료 버튼 비활성');await page.getByRole('button',{name:'← 목록으로 돌아가기',exact:true}).click();await page.locator('.incident-table').waitFor();incident.closure={eligible:true,reasons:[]};await page.getByRole('button',{name:'상세 보기 →'}).nth(1).click();await page.getByRole('button',{name:'사건 접수',exact:true}).waitFor();checks.push('신규 사건에서 접수 버튼 제공');await page.getByRole('button',{name:'← 목록으로 돌아가기',exact:true}).click();await page.locator('.incident-table').waitFor();
- await page.setViewportSize({width:390,height:844});await page.screenshot({path:path.join(out,'03-list-mobile.png'),fullPage:true});
- const width=await page.evaluate(()=>({viewport:innerWidth,document:document.documentElement.scrollWidth}));checks.push('모바일 페이지 폭 '+JSON.stringify(width));assert(width.document<=width.viewport,'모바일 페이지 가로 넘침');
- await page.getByRole('button',{name:'상세 보기 →'}).first().click();await page.locator('.incident-workspace').waitFor();await page.screenshot({path:path.join(out,'04-detail-mobile.png')});
- await page.locator('.incident-closure-section').scrollIntoViewIfNeeded();await page.screenshot({path:path.join(out,'05-closure-mobile.png')});
+ await page.getByRole('button',{name:'원본 사건 상세 보기',exact:true}).click();await page.waitForFunction(()=>document.querySelector('.incident-id-row textarea')?.value==='22222222-2222-4222-8222-222222222222');await page.goBack();await page.waitForFunction(()=>document.querySelector('.incident-id-row textarea')?.value==='11111111-1111-4111-8111-111111111111');checks.push('과거 원본 조회 및 브라우저 뒤로가기 복귀');
+ await page.getByRole('button',{name:'화면 닫기',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('#detail').open);await page.goForward();await page.locator('.incident-workspace').waitFor();checks.push('닫기·브라우저 앞으로가기 상세 복원');
+ await page.getByRole('button',{name:'← 목록으로 돌아가기',exact:true}).click();await page.locator('.incident-table').waitFor();assert.equal(await page.getByLabel('사건 검색',{exact:true}).inputValue(),'FastAPI');checks.push('목록 복귀 후 검색·필터 유지');
+ incident.closure={eligible:false,reasons:['TWO_HEALTHY_CHECKS_REQUIRED']};await page.getByRole('button',{name:'상세 보기 →'}).first().click();await page.locator('.incident-workspace').waitFor();assert.equal(await page.getByRole('button',{name:'사건 종료',exact:true}).isEnabled(),false);checks.push('서버 종료 조건 미충족 시 종료 버튼 비활성');
+ await page.getByRole('button',{name:'← 목록으로 돌아가기',exact:true}).click();await page.locator('.incident-table').waitFor();incident.closure={eligible:true,reasons:[]};
+ await page.getByLabel('사건 검색',{exact:true}).fill('');await page.getByLabel('심각도 필터',{exact:true}).selectOption('all');await page.getByLabel('사건 상태 필터',{exact:true}).selectOption('all');await page.getByRole('button',{name:'검색 적용',exact:true}).click();await page.waitForFunction(()=>document.querySelector('.incident-list-count')?.textContent.includes('총 2건'));
+ await page.getByRole('button',{name:'상세 보기 →'}).nth(1).click();await page.getByRole('button',{name:'사건 접수',exact:true}).waitFor();checks.push('신규 사건 접수 버튼 유지');
  assert.deepEqual(errors,[]);checks.push('브라우저 JavaScript 오류 0건');
- fs.writeFileSync(path.join(out,'checks.json'),JSON.stringify({data:'격리 검수 데이터이며 실제 운영 상태가 아닙니다.',checks,posts,errors},null,2));
- console.log(checks.join('\n'));
+ fs.writeFileSync(path.join(out,'checks.json'),JSON.stringify({data:'격리 검수 데이터이며 실제 운영 상태가 아닙니다.',scope:'desktop-only',checks,posts,errors},null,2));console.log(checks.join('\n'));
  }finally{await browser.close();server.close();}})().catch(e=>{console.error(e);server.close();process.exitCode=1});
