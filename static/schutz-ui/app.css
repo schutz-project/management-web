@@ -102,3 +102,5 @@
  .incident-table .list-slack-line{gap:4px}
  .incident-table .list-slack-line small{min-width:32px}
 }
+
+.incident-list-time{display:flex;flex-direction:column;gap:2px;line-height:1.7}.incident-list-time span{white-space:nowrap}
