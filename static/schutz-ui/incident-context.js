@@ -43,12 +43,34 @@
     const unmatched=[...cited].filter(id=>!current.has(id)&&!historical.has(id));
     const successes=Array.isArray(job?.history)?job.history.filter(a=>a?.outcome==='succeeded'&&timestamp(a.finished_at)!==null).sort((a,b)=>timestamp(a.finished_at)-timestamp(b.finished_at)):[];
     const start=timestamp(incident.detected_at),end=timestamp(incident.closed_at);
+    const sourceRows=Array.isArray(incident.evidence)&&incident.evidence.length?incident.evidence:currentRows;
+    const failures=sourceRows.filter(row=>{
+      const p=object(row?.payload)?row.payload:{};
+      if(incident.rule_id==='login_failures')return row.kind==='login'&&p.event_type==='login_failed';
+      return row?.kind==='check'&&((Number.isFinite(p.status_code)&&p.status_code>=500&&p.status_code<=599)||(p.status_code===0&&p.probe_success===false));
+    }).map(row=>timestamp(row.occurred_at)).filter(value=>value!==null).sort((a,b)=>a-b);
     return {known,referencesKnown,current:currentRows,histories,malformed,unmatched,
       currentCitations:referencesKnown?currentRows.filter(r=>r.cited).length:null,
       historyCitations:referencesKnown?histories.filter(r=>r.cited).length:null,
       analysisAt:successes.at(-1)?.finished_at||null,
+      failureWindow:failures.length?{first:new Date(failures[0]).toISOString(),last:new Date(failures.at(-1)).toISOString(),count:failures.length,source:sourceRows===incident.evidence?'detail_evidence':'ai_input'}:null,
       lifecycleSeconds:incident.status==='closed'&&start!==null&&end!==null&&end>=start?Math.floor((end-start)/1000):null};
   }
-  root.SchutzIncidentContext={build};
+  function jobState(job,kind){
+    if(!job)return {label:kind==='ai'?'분석 기록 없음':'미발송 / 기록 없음',tone:'unknown',lastAttempt:null};
+    const times=(Array.isArray(job.history)?job.history:[]).map(a=>a?.started_at).filter(v=>timestamp(v)!==null).sort((a,b)=>timestamp(a)-timestamp(b));
+    const at=timestamp(job.last_attempt_at)!==null?job.last_attempt_at:times.at(-1)||null;
+    let label={pending:'대기',running:'실행 중',failed:'실패'}[job.status],tone=job.status==='failed'?'failed':'pending';
+    if(!label){
+      if(job.status!=='succeeded'){label='처리 상태 미확인';tone='unknown'}
+      else if(job.mode==='demo'){label='시험 처리 · 실제 연결 아님';tone='unknown'}
+      else if(job.mode!=='live'){label='완료 · 연결 방식 미확인';tone='unknown'}
+      else if(kind==='ai'){label='분석 성공';tone='success'}
+      else if(job.sent===true||job.result?.sent===true){label='전송 성공';tone='success'}
+      else{label='완료 · 전송 미확인';tone='unknown'}
+    }
+    return {label,tone,lastAttempt:at};
+  }
+  root.SchutzIncidentContext={build,jobState};
   if(typeof module!=='undefined'&&module.exports)module.exports=root.SchutzIncidentContext;
 })(typeof window!=='undefined'?window:globalThis);

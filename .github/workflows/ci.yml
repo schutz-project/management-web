@@ -34,6 +34,25 @@ jobs:
       - name: Check integrated monitoring UI
         run: node --test tests/test-monitoring-ui.cjs
 
+      - name: Install isolated browser review tools
+        run: |
+          mkdir -p "$RUNNER_TEMP/schutz-browser-tools"
+          npm install --prefix "$RUNNER_TEMP/schutz-browser-tools" playwright@1.56.1
+          "$RUNNER_TEMP/schutz-browser-tools/node_modules/.bin/playwright" install --with-deps chromium
+
+      - name: Capture incident UI and verify browser interactions
+        env:
+          NODE_PATH: ${{ runner.temp }}/schutz-browser-tools/node_modules
+        run: node tests/capture-incident-ui.cjs
+
+      - name: Save isolated incident UI screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: incident-ui-v31-review
+          path: artifacts/incident-ui-v31/
+          retention-days: 14
+
       - name: Check HTTP and HTTPS release health
         run: python3 tests/test_release_health.py
 
@@ -69,6 +88,13 @@ jobs:
           -v "$PWD/tests:/tests:ro"
           schutz-management-web:ci
           python -m unittest discover -s /tests -p test_incident_actions.py
+
+      - name: Check incident list filters and read-only metadata
+        run: >
+          docker run --rm --network none
+          -v "$PWD/tests:/tests:ro"
+          schutz-management-web:ci
+          python -m unittest discover -s /tests -p test_incident_list.py
 
   publish-ecr:
     name: Publish image to ECR
@@ -116,7 +142,7 @@ jobs:
   deploy-ec2:
     name: Deploy management-web to EC2
     needs: publish-ecr
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && !contains(github.event.head_commit.message, '[skip deploy]')
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     concurrency:

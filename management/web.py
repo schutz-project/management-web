@@ -89,17 +89,18 @@ def create_app(settings=None,engine=None,metric_readers=None,observer=None):
         if start is not None or end is not None: invalid('range')
         return await app.state.observer.snapshot(window=window)
     @app.get('/api/incidents')
-    def incidents(request:Request,status:str='open',page:int=1):
-        if status not in ['open','closed'] or not 1<=page<=100000: invalid('query')
+    def incidents(request:Request,status:str='open',page:int=1,q:str='',severity:str='all',state:str='all'):
+        from management.incident_list import list_incidents,STATES
+        if (status not in ['open','closed','all'] or not 1<=page<=100000 or len(q)>80
+            or severity not in ['all','unknown','warning','critical'] or state not in ['all',*STATES]): invalid('query')
         with factory.begin() as db:
             admin(request,db)
-            conditions=Incident.status=='closed' if status=='closed' else Incident.status!='closed'
-            rows=db.scalars(select(Incident).where(conditions).order_by(Incident.detected_at.desc(),Incident.id).offset((page-1)*20).limit(20)).all()
-            return {'items':[item(r,db) for r in rows],'total':db.scalar(select(func.count()).select_from(Incident).where(conditions)),'page':page,'page_size':20}
+            return list_incidents(db,item,status,page,q.strip(),severity,state)
     @app.get('/api/incidents/{id}')
     def detail(id:str,request:Request):
         with factory.begin() as db:
-            admin(request,db); row=load(db,id)
+            admin(request,db); row=db.get(Incident,id)
+            if row is None: raise ApiError(404,'INCIDENT_NOT_FOUND','사건을 찾을 수 없습니다.')
             evidence=db.scalars(select(Evidence).join(IncidentEvidence,IncidentEvidence.evidence_id==Evidence.id).where(IncidentEvidence.incident_id==id).order_by(Evidence.occurred_at.desc()).limit(100)).all()
             jobs=[]
             for job in db.scalars(select(Job).where(Job.incident_id==id).order_by(Job.kind)):
@@ -107,7 +108,9 @@ def create_app(settings=None,engine=None,metric_readers=None,observer=None):
                 jobs.append({'kind':job.kind,'status':job.status,'mode':job.mode,'attempts':job.attempts,'model':job.model,'prompt_version':job.prompt_version,'result':job.result,'error_code':job.error_code,'input_evidence':job.input_evidence,'history':[{'number':a.number,'outcome':a.outcome,'error_code':a.error_code,'started_at':stamp(a.started_at),'finished_at':stamp(a.finished_at)} for a in attempts]})
             actions=db.scalars(select(Action).where(Action.incident_id==id).order_by(Action.created_at,Action.id)).all()
             reasons=closure_reasons(db,row,test_stopped=True) if row.status!='closed' else []
-            return {**item(row,db),'evidence':[{'id':e.id,'kind':e.kind,'occurred_at':stamp(e.occurred_at),'payload':e.payload} for e in evidence],'jobs':jobs,'actions':[{'id':a.id,'kind':a.kind,'content':a.content,'actor_id':a.actor_id,'created_at':stamp(a.created_at)} for a in actions],'closure':{'eligible':not reasons,'reasons':reasons,'test_stop_confirmation_required':row.rule_id=='login_failures' or row.rule_id=='notification_delivery_test' and row.synthetic}}
+            from management.incident_list import severity_expression
+            severity=db.scalar(select(severity_expression()).where(Incident.id==id))
+            return {**item(row,db),'severity':severity,'severity_source':'stored_prometheus_evidence' if severity else None,'evidence':[{'id':e.id,'kind':e.kind,'occurred_at':stamp(e.occurred_at),'payload':e.payload} for e in evidence],'jobs':jobs,'actions':[{'id':a.id,'kind':a.kind,'content':a.content,'actor_id':a.actor_id,'created_at':stamp(a.created_at)} for a in actions],'closure':{'eligible':not reasons,'reasons':reasons,'test_stop_confirmation_required':row.rule_id=='login_failures' or row.rule_id=='notification_delivery_test' and row.synthetic}}
     def conflict(): raise ApiError(409,'STATE_CONFLICT','사건 상태가 변경되었습니다. 새로고침해 주세요.')
     @app.post('/api/incidents/{id}/accept')
     def accept(id:str,request:Request):
