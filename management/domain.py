@@ -77,6 +77,17 @@ def closure_reasons(db,incident,at=None,test_stopped=False):
     at=at or now(); reasons=[]
     if incident.status!='in_progress': reasons.append('ACTION_REQUIRED')
     if not db.scalar(select(func.count()).select_from(Action).where(Action.incident_id==incident.id,Action.kind=='action')): reasons.append('ACTION_REQUIRED')
+    if incident.rule_id == 'notification_delivery_test' and incident.synthetic:
+        if not test_stopped: reasons.append('TEST_STOP_REQUIRED')
+        jobs={job.kind:job for job in db.scalars(select(Job).where(Job.incident_id==incident.id))}
+        for kind in ('slack','ai','slack_ai'):
+            job=jobs.get(kind)
+            if (job is None or job.status!='succeeded' or job.mode!='live'
+                or not isinstance(job.result,dict)
+                or (kind!='ai' and job.result.get('sent') is not True)
+                or (kind=='ai' and not job.result.get('summary'))):
+                reasons.append('DELIVERY_SUCCESS_REQUIRED'); break
+        return sorted(set(reasons))
     from management.alert_policy import RULE_IDS,recovery_ready
     if incident.rule_id in RULE_IDS:
         if not recovery_ready(db,incident,at): reasons.append('PROMETHEUS_RECOVERY_NOT_CONFIRMED')
@@ -99,3 +110,4 @@ def change(db,incident,values):
     result=db.execute(update(Incident).where(Incident.id==incident.id,Incident.version==version).values(**values,version=version+1))
     if result.rowcount!=1: return False
     db.refresh(incident); return True
+

@@ -2,8 +2,8 @@
 (()=>{'use strict';
 const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
 const state={user:null,csrf:null,view:'dashboard',service:'app',serviceScales:{app:'full',database:'full',proxy:'full'},graphScale:'full',resourceKey:'cpu',resourceHost:null,resourceScales:{cpu:'full',memory:'full',disk:'full'},overlay:null,window:'15m',customRange:null,filter:'open',page:1,generation:0,busy:false,timer:null,data:null,dashboard:null,mode:{mode:'live',writes_enabled:false}};
-const labels={new:'신규',accepted:'접수',in_progress:'조치 중',closed:'종료',normal:'정상',abnormal:'이상',unknown:'미확인',succeeded:'성공',failed:'실패',pending:'대기',running:'실행 중',availability_failure:'가용성 장애',response_delay:'응답 지연',login_failures:'반복 로그인 실패',app:'FastAPI',database:'직원 조회',proxy:'Nginx', 'portal-login':'로그인 감시',ai:'AI 분석',slack:'최초 Slack 알림',slack_ai:'AI 완료 Slack 알림',slack_recovery:'복구 Slack 알림',monitoring_target_down:'수집 대상 연결 실패',portal_telemetry_missing:'앱 메트릭 누락',portal_high_error_rate:'5xx 비율 증가',stale:'수집 지연',unavailable:'조회 실패',no_data:'데이터 없음'};
-const reasons={PROMETHEUS_RECOVERY_NOT_CONFIRMED:'최신 Prometheus 평가와 실제 정상 지표가 두 번 확인되어야 합니다.',ACTION_REQUIRED:'조치 기록이 필요합니다.',TEST_STOP_REQUIRED:'시험 입력 중지 확인이 필요합니다.',LOG_COLLECTION_STALE:'로그 수집이 지연되고 있습니다.',FAILURE_FREE_WINDOW_REQUIRED:'신규 로그인 실패 없이 60초가 지나야 합니다.',TWO_HEALTHY_CHECKS_REQUIRED:'정상 점검 2회 연속이 필요합니다.',CHECK_COLLECTION_STALE:'최근 정상 점검이 필요합니다.'};
+const labels={new:'신규',accepted:'접수',in_progress:'조치 중',closed:'종료',normal:'정상',abnormal:'이상',unknown:'미확인',succeeded:'성공',failed:'실패',pending:'대기',running:'실행 중',availability_failure:'가용성 장애',response_delay:'응답 지연',login_failures:'반복 로그인 실패',app:'FastAPI',database:'직원 조회',proxy:'Nginx', 'portal-login':'로그인 감시',ai:'AI 분석',slack:'최초 Slack 알림',slack_ai:'AI 완료 Slack 알림',slack_recovery:'복구 Slack 알림',monitoring_target_down:'수집 대상 연결 실패',portal_telemetry_missing:'앱 메트릭 누락',portal_high_error_rate:'5xx 비율 증가',notification_delivery_test:'알림 전달 시험',stale:'수집 지연',unavailable:'조회 실패',no_data:'데이터 없음'};
+const reasons={DELIVERY_SUCCESS_REQUIRED:'최초 Slack·AI 분석·AI 완료 Slack의 실제 처리 성공이 필요합니다.',PROMETHEUS_RECOVERY_NOT_CONFIRMED:'최신 Prometheus 평가와 실제 정상 지표가 두 번 확인되어야 합니다.',ACTION_REQUIRED:'조치 기록이 필요합니다.',TEST_STOP_REQUIRED:'시험 입력 중지 확인이 필요합니다.',LOG_COLLECTION_STALE:'로그 수집이 지연되고 있습니다.',FAILURE_FREE_WINDOW_REQUIRED:'신규 로그인 실패 없이 60초가 지나야 합니다.',TWO_HEALTHY_CHECKS_REQUIRED:'정상 점검 2회 연속이 필요합니다.',CHECK_COLLECTION_STALE:'최근 정상 점검이 필요합니다.'};
 const E=(tag,text,cls)=>{const e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e};
 const fmt=(v,p=2)=>typeof v==='number'&&Number.isFinite(v)?v.toLocaleString('ko-KR',{maximumFractionDigits:p}):'미확인';
 const date=v=>v?new Date(v).toLocaleString('ko-KR',{timeZone:'Asia/Seoul',hour12:false}):'미확인';
@@ -53,7 +53,12 @@ async function restoreContext(load=true){const c=await api('/api/auth/context');
  if(c.user.role!=='admin'){signedOut('관리자 권한이 있는 계정이 필요합니다.');return}
  if(load)await enter();
 }
-async function enter(){app.hidden=false;$('#auth-screen').hidden=true;$('.profile').textContent=state.user.username+' ▾';dash.hidden=false;
+async function refreshPermissions(){
+ if(state.mode.local_mode||state.mode.mode==='snapshot')return;
+ state.mode.writes_enabled=false;
+ try{const c=await api('/api/management/capabilities');state.mode.writes_enabled=c.mode==='live'&&c.writes_enabled===true}catch{}
+}
+async function enter(){await refreshPermissions();if(!state.user)return;app.hidden=false;$('#auth-screen').hidden=true;$('.profile').textContent=state.user.username+' ▾';dash.hidden=false;
  remember(false);await loadView();await restoreOverlay();clearInterval(state.timer);state.timer=setInterval(()=>{if(state.window==='live'&&!document.hidden&&!state.busy&&!detail.open)loadView()},30000);
 }
 $('#login-form').onsubmit=async e=>{e.preventDefault();if(state.busy)return;state.busy=true;$('#login-button').disabled=true;
@@ -106,7 +111,7 @@ function renderDashboard(d,o){
  $('.side-status').replaceChildren(E('div','시스템 상태'),E('p',!d?'미확인':known?'기능 점검 정상':'점검 확인 필요'),E('div','조회 시각'),E('p',date(d?.as_of||o?.as_of)));
  const targets=o?.targets?.status==='ok'?o.targets.items:null;const vals=[c?.new,c?c.accepted+c.in_progress:null,c?.closed,targets?targets.filter(t=>t.up).length+' / '+targets.length:null];const notes=['관리자 대응 대기','접수 · 조치 진행','전체 종료 이력','Prometheus 수집 대상'];
  $$('.kpi').forEach((e,i)=>{e.querySelector('strong').textContent=vals[i]===undefined||vals[i]===null?'미확인':String(vals[i])+(i<3?' 건':'');e.querySelector('div:nth-child(2)>small').textContent=notes[i];wire(e,()=>go(i===3?'collectors':'incidents',i===2?'closed':'open'))});$$('.kpi')[2].querySelector('h3').textContent='종료 사건 이력';$('.tiny-badge').textContent=open===null?'?':String(open);
- bell.classList.toggle('no-alerts',o?.alerts?.status==='ok'&&!o.alerts.items.length);renderServices(o,servers);renderResources(o);renderCollectors(o);$('.footer p:last-child').textContent=modeNote();
+ bell.classList.toggle('no-alerts',o?.alerts?.status==='ok'&&!o.alerts.items.length&&open===0);renderServices(o,servers);renderResources(o);renderCollectors(o);$('.footer p:last-child').textContent=modeNote();
  $('#incidents .panel-head a').onclick=e=>{e.preventDefault();go('incidents')};$('#incidents .panel-head .link').textContent='분석 이력 →';$('#incidents .panel-head .link').onclick=()=>go('incidents','closed');
  wire($('.resources .panel-head .link'),()=>go('resources'));wire($('.collector .panel-head .link'),()=>go('collectors'));
 }
@@ -154,7 +159,7 @@ function incidentDetail(d){const root=E('div');root.append(E('h3',(d.synthetic?'
  if(!state.mode.writes_enabled||state.mode.mode==='snapshot')root.append(E('p','조회 전용입니다. 사건 상태와 조치 기록을 변경하지 않습니다.','notice'));
  else{if(d.status==='new')root.append(button('사건 접수',()=>mutate(d.id,'accept',{})));
  if(['accepted','in_progress'].includes(d.status)){const form=E('form');form.append(E('label','조치 내용'));const input=E('textarea');input.maxLength=1000;input.required=true;input.setAttribute('aria-label','조치 내용');input.id='action-content';form.append(input,button('조치 기록 저장',()=>form.requestSubmit()));form.onsubmit=e=>{e.preventDefault();mutate(d.id,'actions',{content:input.value})};root.append(form)}
- if(d.status==='in_progress'){root.append(E('h3','복구 확인 · 사건 종료'));for(const reason of d.closure?.reasons||[])root.append(E('p',reasons[reason]||reason));const form=E('form');const input=E('textarea');input.required=true;input.maxLength=1000;input.setAttribute('aria-label','종료 근거');input.id='resolution';form.append(E('label','종료 근거'),input);let check;if(d.rule_id==='login_failures'){check=E('input');check.type='checkbox';check.required=true;const label=E('label');label.append(check,'시험 입력을 중지했습니다.');form.append(label)}const submit=button('사건 종료',()=>form.requestSubmit());form.append(submit);form.onsubmit=e=>{e.preventDefault();const payload={resolution:input.value};if(check)payload.test_stopped=check.checked;mutate(d.id,'close',payload)};root.append(form)}}
+ if(d.status==='in_progress'){root.append(E('h3','복구 확인 · 사건 종료'));for(const reason of d.closure?.reasons||[])root.append(E('p',reasons[reason]||reason));const form=E('form');const input=E('textarea');input.required=true;input.maxLength=1000;input.setAttribute('aria-label','종료 근거');input.id='resolution';form.append(E('label','종료 근거'),input);let check;if(d.closure?.test_stop_confirmation_required||d.rule_id==='login_failures'){check=E('input');check.type='checkbox';check.required=true;const label=E('label');label.append(check,'시험 입력을 중지했습니다.');form.append(label)}const submit=button('사건 종료',()=>form.requestSubmit());form.append(submit);form.onsubmit=e=>{e.preventDefault();const payload={resolution:input.value};if(check)payload.test_stopped=check.checked;mutate(d.id,'close',payload)};root.append(form)}}
  modal('사건 상세',root);if(window.SchutzDrafts&&state.mode.writes_enabled)window.SchutzDrafts.attach(d,api)}
 async function mutate(id,kind,payload){if(state.busy||!state.mode.writes_enabled)return;state.busy=true;const controls=[...detail.querySelectorAll('button')];controls.forEach(b=>b.disabled=true);let warning;
  try{await api('/api/incidents/'+encodeURIComponent(id)+'/'+kind,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':state.csrf},body:JSON.stringify(payload)});warning='처리 결과를 저장했습니다.'}
@@ -174,7 +179,7 @@ function summaryCard(label,value){const card=E('article',undefined,'read-stat');
 function collectorContent(o){
  const root=E('div'),targetOK=o?.targets?.status==='ok',alertOK=o?.alerts?.status==='ok',targets=targetOK?o.targets.items:[],alerts=alertOK?o.alerts.items:[];
  const summary=E('div',undefined,'read-stats');for(const[label,value]of [['전체 수집 대상',targetOK?targets.length:'미확인'],['수집 성공',targetOK?targets.filter(t=>t.up===true).length:'미확인'],['수집 실패',targetOK?targets.filter(t=>t.up===false).length:'미확인'],['발생 중 경보',alertOK?alerts.length:'미확인']])summary.append(summaryCard(label,value));root.append(summary);
- const alertBox=E('section',undefined,'read-alert');alertBox.append(E('h3','발생 중 경보'));if(!alertOK)alertBox.append(E('p','경보 조회 실패 · 상태 미확인'));else if(!alerts.length)alertBox.append(E('p','조회 시점에 발생 중인 경보가 없습니다.'));else for(const a of alerts){const row=E('div',undefined,'alert-row');row.append(E('b',a.name),E('span',a.severity||'심각도 미제공'));alertBox.append(row)}root.append(alertBox);
+ const alertBox=E('section',undefined,'read-alert');alertBox.append(E('h3','실시간 Prometheus 경보'));if(!alertOK)alertBox.append(E('p','경보 조회 실패 · 상태 미확인'));else if(!alerts.length)alertBox.append(E('p','조회 시점에 발생 중인 Prometheus 경보가 없습니다. 미종료 사건 수와는 별도입니다.'));else for(const a of alerts){const row=E('div',undefined,'alert-row');row.append(E('b',a.name),E('span',a.severity||'심각도 미제공'));alertBox.append(row)}root.append(alertBox);
  const section=E('section',undefined,'read-section');section.append(E('h3','수집 대상 목록'));if(!targetOK)section.append(E('p','수집 대상 조회 실패'));else{const table=E('table',undefined,'read-table');const head=E('thead'),hr=E('tr');for(const t of ['대상','수집 내용','상태','연결 정보'])hr.append(E('th',t));head.append(hr);table.append(head);const body=E('tbody');for(const t of targets){const tr=E('tr');tr.append(E('td',targetLabel(t)),E('td',roles[t.job]||(t.instance.includes('proxy-health')?'Nginx 응답 점검':'FastAPI 응답 점검')));const status=E('td');status.append(E('span',t.up===true?'수집 성공':t.up===false?'수집 실패':'미확인',t.up===true?'status-pill':'status-pill status-unknown'));tr.append(status);const cell=E('td'),extra=E('tr',undefined,'read-detail');extra.hidden=true;const td=E('td');td.colSpan=4;const dl=E('dl',undefined,'read-definitions');for(const[k,v]of [['job',t.job],['수집 주소',t.instance],['최근 수집','개별 수집 시각 미제공']])dl.append(E('dt',k),E('dd',v));td.append(dl);extra.append(td);const b=button('상세 보기',()=>{extra.hidden=!extra.hidden;b.textContent=extra.hidden?'상세 보기':'접기';b.setAttribute('aria-expanded',String(!extra.hidden))});b.setAttribute('aria-expanded','false');cell.append(b);tr.append(cell);body.append(tr,extra)}table.append(body);section.append(table)}root.append(section,E('p','수집 성공은 결과를 받아온 상태입니다. 서비스 기능 정상 여부는 별도 점검으로 판단합니다.','read-muted'));
  const logs=o?.logs;root.append(E('div','Loki · 로그 저장소: '+(logs&&Object.values(logs).every(x=>x.status==='ok')?'최근 로그 조회 성공':'이번 데이터에서 상태 미확인'),'read-note'));return root;
 }
@@ -188,13 +193,25 @@ function showSettings(){
  const help=E('details',undefined,'read-help');help.append(E('summary','갱신 및 AI 결과 표시 기준'),E('p','실제 API 연결 후 실시간을 선택하면 30초마다 다시 조회합니다. 화면 조회로 AI 재분석이나 Slack 발송을 실행하지 않습니다.'),E('p','AI 결과는 서버에 저장된 원문을 표시합니다. 자동 번역은 별도 구현 전입니다.'));page.append(help)
 }
 const alertPanel=E('section',undefined,'alert-popover');alertPanel.hidden=true;alertPanel.setAttribute('aria-label','경보 알림');header.append(alertPanel);const bell=$('.notify');bell.setAttribute('aria-expanded','false');
-function closeAlerts(){alertPanel.hidden=true;bell.setAttribute('aria-expanded','false')}
-function toggleAlerts(){if(!alertPanel.hidden){closeAlerts();return}alertPanel.replaceChildren();const o=state.data;const head=E('div',undefined,'alert-popover-head');head.append(E('h3','경보 알림'),button('닫기',closeAlerts));alertPanel.append(head);
- if(o?.alerts?.status!=='ok')alertPanel.append(E('p','경보를 조회하지 못했습니다.','alert-empty'));else if(!o.alerts.items.length)alertPanel.append(E('div','발생 중인 경보가 없습니다.','alert-empty'));else for(const a of o.alerts.items){const row=E('article',undefined,'alert-row');row.append(E('b',a.name),E('span',a.severity||'심각도 미제공'));alertPanel.append(row)}
- const targets=o?.targets?.status==='ok'?o.targets.items:null;alertPanel.append(E('div','수집 대상 '+(targets?targets.filter(t=>t.up).length+' / '+targets.length+' 응답':'미확인'),'read-note'),E('p','조회 '+date(o?.as_of)+' · KST','read-muted'),button('수집 상태 보기 →',()=>{closeAlerts();go('collectors')}));alertPanel.hidden=false;bell.setAttribute('aria-expanded','true')}
+let alertSequence=0;
+function closeAlerts(){++alertSequence;alertPanel.hidden=true;bell.setAttribute('aria-expanded','false')}
+function renderAlertPanel(){alertPanel.replaceChildren();const o=state.data;const head=E('div',undefined,'alert-popover-head');head.append(E('h3','경보 · 사건'),button('닫기',closeAlerts));alertPanel.append(head);
+ const count=state.dashboard?.incident_counts;const opened=count?[count.new,count.accepted,count.in_progress]:null;const total=opened&&opened.every(Number.isFinite)?opened.reduce((a,b)=>a+b,0):null;
+ const summary=E('div',undefined,'read-stats');summary.append(summaryCard('실시간 경보',o?.alerts?.status==='ok'?o.alerts.items.length+'건':'미확인'),summaryCard('미종료 사건',total===null?'미확인':total+'건'));alertPanel.append(summary);
+ if(o?.alerts?.status!=='ok')alertPanel.append(E('p','실시간 경보 조회 실패 · 상태 미확인','alert-empty'));else if(!o.alerts.items.length)alertPanel.append(E('div','현재 발생 중인 Prometheus 경보는 없습니다.','alert-empty'));else for(const a of o.alerts.items){const row=E('article',undefined,'alert-row');row.append(E('b',a.name),E('span',a.severity||'심각도 미제공'));alertPanel.append(row)}
+ alertPanel.append(E('p','실시간 경보는 현재 탐지 상태이며, 미종료 사건은 관리자 처리가 남은 기록입니다. 모의 사건이나 복구 후 미종료 사건은 경보 없이 남을 수 있습니다.','read-muted'),button('미종료 사건 보기 →',()=>{closeAlerts();go('incidents','open')}));
+ const targets=o?.targets?.status==='ok'?o.targets.items:null;alertPanel.append(E('div','수집 대상 '+(targets?targets.filter(t=>t.up).length+' / '+targets.length+' 응답':'미확인'),'read-note'),E('p','경보 조회 '+date(o?.current_as_of||o?.as_of)+' · 사건 조회 '+date(state.dashboard?.as_of)+' · KST','read-muted'),button('수집 상태 보기 →',()=>{closeAlerts();go('collectors')}));
+}
+async function toggleAlerts(){if(!alertPanel.hidden){closeAlerts();return}const seq=++alertSequence;renderAlertPanel();alertPanel.hidden=false;bell.setAttribute('aria-expanded','true');
+ if(state.mode.mode==='snapshot')return;
+ const rows=await Promise.allSettled([api('/api/dashboard'),getObservation()]);
+ if(seq!==alertSequence||alertPanel.hidden||!state.user)return;
+ state.dashboard=rows[0].status==='fulfilled'?rows[0].value:null;state.data=rows[1].status==='fulfilled'?rows[1].value:null;renderAlertPanel();
+}
 window.addEventListener('keydown',e=>{if(e.key==='Escape')closeAlerts()});window.addEventListener('click',e=>{if(!alertPanel.contains(e.target)&&!bell.contains(e.target))closeAlerts()});
 async function boot(){$('#auth-message').textContent='로그인 상태를 확인하고 있습니다…';$('#auth-retry').hidden=true;$('#login-form').hidden=true;
- try{try{const r=await fetch('/local/status',{cache:'no-store'});if(r.ok)state.mode=await r.json()}catch{}if(state.mode.mode==='snapshot'){state.window='15m';$$('.periods button').forEach(b=>{b.disabled=b.dataset.window!=='15m'})}await restoreContext()}
+ try{try{const r=await fetch('/local/status',{cache:'no-store'});if(r.ok)state.mode={...await r.json(),local_mode:true}}catch{}if(state.mode.mode==='snapshot'){state.window='15m';$$('.periods button').forEach(b=>{b.disabled=b.dataset.window!=='15m'})}await restoreContext()}
  catch(e){app.hidden=true;$('#auth-screen').hidden=false;$('#auth-message').textContent='연결 확인 실패 · '+e.message;$('#auth-retry').hidden=false}}
 boot();
 })();
+
