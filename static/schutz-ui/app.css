@@ -70,3 +70,4 @@
 .incident-workspace .incident-id-row button{flex:none}
 .incident-workspace .incident-closure-section>button{margin-top:14px}
 @media(max-width:680px){.app{grid-template-columns:minmax(0,1fr)}.sidebar,.head-right{min-width:0;max-width:100%}.head-right{flex-wrap:wrap}.head-right .periods{max-width:100%}.incident-list-v31,.incident-list-toolbar,.incident-filters{min-width:0}.incident-filters input[type=search]{flex:1 1 100%;width:100%;min-width:0}}
+@media(max-width:680px){.demo-ribbon{position:static;justify-self:end;width:fit-content;max-width:calc(100% - 24px);margin:8px 12px 12px auto}}
