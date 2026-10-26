@@ -104,3 +104,15 @@
 }
 
 .incident-list-time{display:flex;flex-direction:column;gap:2px;line-height:1.7}.incident-list-time span{white-space:nowrap}
+
+/* Final desktop readability pass: secondary text meets normal-text contrast. */
+.incident-workspace .read-muted,.incident-workspace .read-note,.incident-workspace .read-definitions,.incident-workspace .context-id,.incident-workspace .attempt-history,.incident-workspace .attempt-row span,.incident-workspace .draft-panel p,.incident-workspace .context-history-card h5,.incident-status-meta,.incident-judgement .read-note{font-size:13px;color:#4b6078;line-height:1.75}
+.incident-workspace .read-definitions dt,.incident-status-meta dt{color:#52677f}
+.incident-list-count,.incident-list-v31>.read-muted,.incident-count-card small,.incident-table td small{font-size:13px;color:#4b6078;line-height:1.65}
+.incident-table th{color:#4b6078}
+.incident-workspace .incident-badge,.incident-list-v31 .incident-badge{font-size:12px}
+.incident-workspace .tone-unknown,.incident-list-v31 .tone-unknown{color:#49617b}
+.incident-workspace .tone-pending,.incident-list-v31 .tone-pending{color:#95580a}
+.incident-workspace .tone-info,.incident-list-v31 .tone-info{color:#075fae}
+.incident-workspace .tone-success,.incident-list-v31 .tone-success{color:#006e4d}
+.incident-workspace .read-stat p,.view-panel:has(.incident-list-v31)>.read-muted{font-size:13px;color:#4b6078;line-height:1.75}

@@ -37,6 +37,7 @@ const server=http.createServer((req,res)=>{const url=new URL(req.url,'http://loc
   assert.equal(await page.locator('.incident-table th').count(),9);assert.equal(await page.locator('.incident-count-card').count(),4);
   await page.getByRole('button',{name:'상세 보기 →'}).first().click();await page.locator('.incident-workspace').waitFor();
   assert.equal(await page.getByRole('button',{name:'화면 닫기',exact:true}).count(),1);assert.equal(await page.locator('#detail-close').isVisible(),false);
+  const secondary=await page.locator('.incident-status-meta dt,.incident-workspace .read-muted,.incident-workspace .read-note').evaluateAll(es=>es.filter(e=>e.getClientRects().length).map(e=>parseFloat(getComputedStyle(e).fontSize)));assert(secondary.every(size=>size>=13),prefix+' 보조 설명 글자 크기');checks.push(prefix+'px: 보조 설명 최소 13px 확인');
   const guide=await page.locator('.incident-judgement').boundingBox();assert(guide.height<160,prefix+' 운영 판단 과도한 여백');
   const overflow=await page.locator('#detail').evaluate(e=>({width:e.clientWidth,scroll:e.scrollWidth}));assert(overflow.scroll<=overflow.width+1,prefix+' 상세 가로 잘림');
   await page.screenshot({path:path.join(out,prefix+'-02-detail-top.png')});
