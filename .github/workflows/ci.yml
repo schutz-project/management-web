@@ -63,6 +63,13 @@ jobs:
           schutz-management-web:ci
           python -m unittest discover -s /tests -p test_prometheus_policy.py
 
+      - name: Check authenticated incident actions and test closure
+        run: >
+          docker run --rm --network none
+          -v "$PWD/tests:/tests:ro"
+          schutz-management-web:ci
+          python -m unittest discover -s /tests -p test_incident_actions.py
+
   publish-ecr:
     name: Publish image to ECR
     needs: [docker-check]
@@ -133,3 +140,4 @@ jobs:
           PUBLISHED_IMAGE: ${{ needs.publish-ecr.outputs.image }}
           GH_TOKEN: ${{ github.token }}
         run: python3 deploy/auto-release.py
+

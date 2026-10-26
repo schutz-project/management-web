@@ -21,6 +21,8 @@ def create_app(settings=None,engine=None,metric_readers=None,observer=None):
     def admin(request,db,write=False):
         session,user,_=app.state.authenticate(request,db,lock=write)
         if user.role!='admin': raise ApiError(403,'FORBIDDEN','관리자 계정이 필요합니다.')
+        if write and not app.state.settings.management_actions_enabled:
+            raise ApiError(403,'ACTIONS_DISABLED','현재 사건 처리가 비활성화되어 있습니다.')
         if write: app.state.csrf(request,session.csrf_token_hash)
         return user
     def body(request):
@@ -58,6 +60,11 @@ def create_app(settings=None,engine=None,metric_readers=None,observer=None):
     @app.get('/')
     @app.get('/incidents/{path_id}')
     def index(path_id:str=''): return FileResponse(ROOT/'static/schutz-ui/index.html')
+    @app.get('/api/management/capabilities')
+    def capabilities(request:Request):
+        with factory.begin() as db:
+            admin(request,db)
+            return {'mode':'live','writes_enabled':app.state.settings.management_actions_enabled}
     @app.get('/api/dashboard')
     def dashboard(request:Request):
         with factory.begin() as db:
@@ -100,7 +107,7 @@ def create_app(settings=None,engine=None,metric_readers=None,observer=None):
                 jobs.append({'kind':job.kind,'status':job.status,'mode':job.mode,'attempts':job.attempts,'model':job.model,'prompt_version':job.prompt_version,'result':job.result,'error_code':job.error_code,'input_evidence':job.input_evidence,'history':[{'number':a.number,'outcome':a.outcome,'error_code':a.error_code,'started_at':stamp(a.started_at),'finished_at':stamp(a.finished_at)} for a in attempts]})
             actions=db.scalars(select(Action).where(Action.incident_id==id).order_by(Action.created_at,Action.id)).all()
             reasons=closure_reasons(db,row,test_stopped=True) if row.status!='closed' else []
-            return {**item(row,db),'evidence':[{'id':e.id,'kind':e.kind,'occurred_at':stamp(e.occurred_at),'payload':e.payload} for e in evidence],'jobs':jobs,'actions':[{'id':a.id,'kind':a.kind,'content':a.content,'actor_id':a.actor_id,'created_at':stamp(a.created_at)} for a in actions],'closure':{'eligible':not reasons,'reasons':reasons,'test_stop_confirmation_required':row.rule_id=='login_failures'}}
+            return {**item(row,db),'evidence':[{'id':e.id,'kind':e.kind,'occurred_at':stamp(e.occurred_at),'payload':e.payload} for e in evidence],'jobs':jobs,'actions':[{'id':a.id,'kind':a.kind,'content':a.content,'actor_id':a.actor_id,'created_at':stamp(a.created_at)} for a in actions],'closure':{'eligible':not reasons,'reasons':reasons,'test_stop_confirmation_required':row.rule_id=='login_failures' or row.rule_id=='notification_delivery_test' and row.synthetic}}
     def conflict(): raise ApiError(409,'STATE_CONFLICT','사건 상태가 변경되었습니다. 새로고침해 주세요.')
     @app.post('/api/incidents/{id}/accept')
     def accept(id:str,request:Request):
@@ -139,3 +146,4 @@ def create_app(settings=None,engine=None,metric_readers=None,observer=None):
             db.add(Action(incident_id=id,kind='close',content=resolution,actor_id=user.user_id))
             return item(row,db)
     return app
+

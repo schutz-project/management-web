@@ -21,3 +21,5 @@ class Settings(BaseSettings):
     fault_run_id: str = ''
     session_cookie_name: str = 'portal_session'
     prelogin_cookie_name: str = 'portal_prelogin'
+    management_actions_enabled: bool = True
+

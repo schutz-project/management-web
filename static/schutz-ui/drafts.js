@@ -4,12 +4,16 @@
   const recoveryMessages = {
     TWO_HEALTHY_CHECKS_REQUIRED: '정상 점검 2회 연속 확인이 필요합니다.',
     CHECK_COLLECTION_STALE: '최근 점검 데이터 갱신이 필요합니다.',
+    PROMETHEUS_RECOVERY_NOT_CONFIRMED: '최신 Prometheus 평가와 정상 지표 확인이 필요합니다.',
+    DELIVERY_SUCCESS_REQUIRED: '최초 Slack·AI 분석·AI 완료 Slack의 실제 처리 성공 확인이 필요합니다.',
     LOG_COLLECTION_STALE: '최근 로그인 로그 수집 확인이 필요합니다.',
     FAILURE_FREE_WINDOW_REQUIRED: '추가 로그인 실패 없이 60초가 경과해야 합니다.'
   };
   const rules = {
     availability_failure: '가용성 실패', response_delay: '응답 지연',
-    login_failures: '반복 로그인 실패'
+    login_failures: '반복 로그인 실패', notification_delivery_test: '알림 전달 시험',
+    monitoring_target_down: '수집 대상 연결 실패', portal_telemetry_missing: '앱 메트릭 누락',
+    portal_high_error_rate: '5xx 비율 증가'
   };
   const stateNames = {pending: '대기', running: '실행 중', failed: '실패'};
   const bounded = value => String(value || '').replace(/[\x00-\x1f\x7f]/g, ' ').slice(0, 80);
@@ -41,6 +45,8 @@
     let recovery;
     if (data.status === 'closed') recovery = '종료된 사건입니다. 현재 복구 상태는 별도 점검이 필요합니다.';
     else if (!recovered) recovery = '복구 조건이 아직 충족되지 않았습니다. ' + blockers.map(r => recoveryMessages[r] || '추가 복구 조건 확인이 필요합니다.').join(' ');
+    else if (data.rule_id === 'notification_delivery_test' && data.synthetic) recovery = '모의 알림 전달 시험의 처리 성공 조건을 확인했습니다. 실제 장애 복구를 의미하지 않으며 시험 종료와 알림 수신은 담당자가 확인해야 합니다.';
+    else if (data.monitoring) recovery = '현재 사건의 Prometheus 복구 조건을 확인했습니다. 사건 종료는 담당자의 조치 기록과 확인이 필요합니다.';
     else if (security) recovery = '로그 수집 갱신과 추가 로그인 실패 없이 60초 경과 조건을 확인했습니다. 시험 입력 중지 여부는 담당자의 확인이 필요합니다.';
     else recovery = '정상 점검 2회 이상 연속 및 최근 점검 데이터 갱신 조건 충족을 확인했습니다.';
     const delivery = [jobText(data.jobs, 'slack', '최초 알림'), jobText(data.jobs, 'ai', 'AI 분석'), jobText(data.jobs, 'slack_ai', 'AI 후속 알림')].join(' ');
@@ -67,7 +73,7 @@
       const panel = doc.createElement('div');
       panel.dataset.draftKind = kind;
       panel.className = 'draft-panel';
-      
+
       const generate = doc.createElement('button');
       generate.type = 'button'; generate.textContent = label;
       const note = doc.createElement('p');
@@ -117,4 +123,5 @@
   root.SchutzDrafts = {buildDraft, attach};
   if (typeof module !== 'undefined' && module.exports) module.exports = root.SchutzDrafts;
 })(typeof window !== 'undefined' ? window : globalThis);
+
 
