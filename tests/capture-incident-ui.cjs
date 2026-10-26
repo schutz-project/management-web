@@ -12,7 +12,7 @@ monitoring:{alert_name:'PortalProbeFailed',state:'normal',last_evaluated_at:at,r
 closure:{eligible:true,reasons:[]},actions:[{kind:'action',content:'오류 시점의 로그 및 배포 이력을 확인했습니다. 현재 연속 정상 점검과 기능 응답을 확인했습니다.',actor_id:'preview-admin',created_at:'2026-10-26T04:06:00Z'}],
 jobs:[{kind:'ai',status:'succeeded',mode:'live',attempts:1,history:[attempt],input_evidence:[...evidence,history],result:{summary:'모의 기능 점검에서 HTTP 500 표본 3건이 관측되었습니다. 현재 점검은 정상이지만 사건은 담당자 확인 전까지 조치 중으로 유지됩니다.',hypotheses:['애플리케이션 처리 오류 또는 배포 변경의 영향 가능성. 원인 확정은 추가 로그 대조가 필요합니다.'],next_checks:['오류 시점의 요청 ID와 배포 이력을 대조하세요.','과거 조치의 적용 조건이 이번 사건과 일치하는지 확인하세요.'],limitations:'과거 사건과의 유사성은 원인 또는 조치 효과를 확정하지 않습니다.',evidence_ids:['probe:app:1','history:'+past]}},
 {kind:'slack',status:'succeeded',mode:'live',attempts:1,history:[attempt],result:{sent:true}},
-{kind:'slack_ai',status:'failed',mode:'live',attempts:2,error_code:'DELIVERY_UNKNOWN',history:[{...attempt,outcome:'failed',error_code:'DELIVERY_UNKNOWN'}],result:null},
+{kind:'slack_ai',status:'succeeded',mode:'live',attempts:1,history:[attempt],result:{sent:true}},
 {kind:'slack_recovery',status:'pending',mode:'live',attempts:0,history:[],result:null}]};
 const cases=[incident,{...incident,id:'33333333-3333-4333-8333-333333333333',target_id:'database',rule_id:'response_delay',severity:null,status:'new',jobs:[]},{...incident,id:past,status:'closed',closed_at:'2026-10-23T03:10:00Z',detected_at:'2026-10-23T03:00:00Z',jobs:[],evidence:[],actions:[]}];
 const posts=[],errors=[],checks=[];
