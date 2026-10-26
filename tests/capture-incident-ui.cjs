@@ -61,6 +61,25 @@ const server=http.createServer((req,res)=>{const url=new URL(req.url,'http://loc
  await page.getByRole('button',{name:'← 목록으로 돌아가기',exact:true}).click();await page.locator('.incident-table').waitFor();incident.closure={eligible:true,reasons:[]};
  await page.getByLabel('사건 검색',{exact:true}).fill('');await page.getByLabel('심각도 필터',{exact:true}).selectOption('all');await page.getByLabel('사건 상태 필터',{exact:true}).selectOption('all');await page.getByRole('button',{name:'검색 적용',exact:true}).click();await page.waitForFunction(()=>document.querySelector('.incident-list-count')?.textContent.includes('총 2건'));
  await page.getByRole('button',{name:'상세 보기 →'}).nth(1).click();await page.getByRole('button',{name:'사건 접수',exact:true}).waitFor();checks.push('신규 사건 접수 버튼 유지');
+ // Closed-case rendering uses only local fixtures; no extra POST requests.
+ incident.status='closed';incident.closed_at='2026-10-26T04:10:00Z';incident.rule_id='monitoring_target_down';
+ incident.monitoring={alert_name:'MonitoringTargetDown',state:'unknown',last_evaluated_at:'2026-10-26T04:09:00Z',recovery_confirmed:false};
+ incident.evidence=[{id:'prom:fixture:1',kind:'prometheus',occurred_at:'2026-10-26T04:09:00Z',payload:{rule_id:'monitoring_target_down',state:'normal'}}];
+ const beforeClosedPosts=posts.length;
+ for(const viewport of [{width:1440,height:1000},{width:1280,height:900}]){
+  await page.setViewportSize(viewport);
+  // Open through the ordinary list to avoid depending on deep-link parameter names.
+  await page.goto(base+'/#view=incidents&status=closed');await page.getByRole('button',{name:'상세 보기 →'}).first().click();
+  await page.locator('.incident-prometheus-summary').waitFor();
+  const panel=page.locator('.incident-prometheus-summary'),value=await panel.textContent();
+  assert(value.includes('종료 전 저장 근거')&&value.includes('정상 지표 확인'));
+  assert(value.includes('현재 상태나 종료 당시 복구 완료를 보증하지 않습니다.'));
+  assert(!value.includes('복구 조건 미충족')&&!value.includes('수집 미확인'));
+  const width=await page.locator('#detail').evaluate(e=>({width:e.clientWidth,scroll:e.scrollWidth}));assert(width.scroll<=width.width+1);
+  await page.screenshot({path:path.join(out,viewport.width+'-closed-monitoring.png')});
+  checks.push(viewport.width+'px: 종료 전 저장 근거·관측 시각 표시, 현재 상태와 구분, 추가 변경 요청 없음');
+ }
+ assert.equal(posts.length,beforeClosedPosts);
  assert.deepEqual(errors,[]);checks.push('브라우저 JavaScript 오류 0건');
  fs.writeFileSync(path.join(out,'checks.json'),JSON.stringify({data:'격리 검수 데이터이며 실제 운영 상태가 아닙니다.',scope:'desktop-only',checks,posts,errors},null,2));console.log(checks.join('\n'));
  }finally{await browser.close();server.close();}})().catch(e=>{console.error(e);server.close();process.exitCode=1});
