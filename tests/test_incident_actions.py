@@ -13,7 +13,7 @@ from management.models import Incident, Job, Action
 from management.web import create_app
 
 
-class IncidentActionTests(unittest.TestCase):
+class IncidentActionFixture(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.engine = build_engine('sqlite:///' + str(Path(self.directory.name)/'test.db'))
@@ -58,6 +58,7 @@ class IncidentActionTests(unittest.TestCase):
         return self.client.post('/api/incidents/test-incident/'+action, json=body,
             headers=kwargs.get('headers',{'X-CSRF-Token':'unit-csrf','Origin':'https://manage.example'}))
 
+class IncidentActionTests(IncidentActionFixture):
     def test_capabilities_requires_authenticated_admin(self):
         self.assertEqual(self.client.get('/api/management/capabilities').status_code,401)
         self.login_cookie('user')

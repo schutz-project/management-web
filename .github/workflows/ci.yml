@@ -70,6 +70,13 @@ jobs:
           schutz-management-web:ci
           python -m unittest discover -s /tests -p test_incident_actions.py
 
+      - name: Check incident list filters and read-only metadata
+        run: >
+          docker run --rm --network none
+          -v "$PWD/tests:/tests:ro"
+          schutz-management-web:ci
+          python -m unittest discover -s /tests -p test_incident_list.py
+
   publish-ecr:
     name: Publish image to ECR
     needs: [docker-check]
