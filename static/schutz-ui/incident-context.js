@@ -56,6 +56,17 @@
       failureWindow:failures.length?{first:new Date(failures[0]).toISOString(),last:new Date(failures.at(-1)).toISOString(),count:failures.length,source:sourceRows===incident.evidence?'detail_evidence':'ai_input'}:null,
       lifecycleSeconds:incident.status==='closed'&&start!==null&&end!==null&&end>=start?Math.floor((end-start)/1000):null};
   }
+  function closedMonitoring(incident){
+    const end=timestamp(incident.closed_at);
+    const rows=(Array.isArray(incident.evidence)?incident.evidence:[]).filter(row=>{
+      const at=timestamp(row?.occurred_at),p=object(row?.payload)?row.payload:{};
+      return row?.kind==='prometheus'&&end!==null&&at!==null&&at<=end
+        &&p.rule_id===incident.rule_id
+        &&['firing','pending','normal','unknown'].includes(p.state);
+    }).sort((a,b)=>timestamp(b.occurred_at)-timestamp(a.occurred_at));
+    const row=rows[0];
+    return row?{state:row.payload.state,at:row.occurred_at}:null;
+  }
   function jobState(job,kind){
     if(!job)return {label:kind==='ai'?'분석 기록 없음':'미발송 / 기록 없음',tone:'unknown',lastAttempt:null};
     const times=(Array.isArray(job.history)?job.history:[]).map(a=>a?.started_at).filter(v=>timestamp(v)!==null).sort((a,b)=>timestamp(a)-timestamp(b));
@@ -71,6 +82,7 @@
     }
     return {label,tone,lastAttempt:at};
   }
-  root.SchutzIncidentContext={build,jobState};
+  root.SchutzIncidentContext={build,jobState,closedMonitoring};
   if(typeof module!=='undefined'&&module.exports)module.exports=root.SchutzIncidentContext;
 })(typeof window!=='undefined'?window:globalThis);
+

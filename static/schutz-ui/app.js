@@ -250,7 +250,7 @@ function currentIncidentStatus(d){
  else if(!server)current.append(E('p','현재 서비스 기능 상태 미확인 · 해당 사건 대상과 연결된 기능 점검 정보가 없습니다.','read-note'));
  else{const known=typeof server.last_checked_at==='string'&&Number.isFinite(Date.parse(server.last_checked_at))&&!server.collection_delayed&&state.mode.mode!=='snapshot';current.append(statusBadge('기능 점검 '+(known?name(server.status):'미확인'),known&&server.status==='normal'?'success':'unknown'));if(server.collection_delayed)current.append(E('p','수집 지연 · 과거 표본을 현재 정상으로 해석하지 않습니다.','read-muted'))}
  const metadata=E('dl',undefined,'incident-status-meta');for(const[label,value]of [['관측 시각',contextDate(server?.last_checked_at)+' (KST)'],['조회 시각',contextDate(at)+' (KST)'],['출처','관리 DB · 최근 Worker 기능 점검']])metadata.append(E('dt',label),E('dd',value));current.append(metadata);layout.append(current);
- if(d.monitoring){const m=d.monitoring,prom=E('div',undefined,'incident-prometheus-summary');prom.append(E('h4','Prometheus 경보'),E('b',m.alert_name||'경보 정보 미확인'),E('p','상태: '+({firing:'발생 중',pending:'발생 대기',normal:'정상 지표 확인',unknown:'수집 미확인'}[m.state]||'미확인')));const meta=E('dl',undefined,'incident-status-meta');meta.append(E('dt','마지막 평가'),E('dd',contextDate(m.last_evaluated_at)+' (KST)'));prom.append(meta,E('p',m.recovery_confirmed?'복구 신호 확인 · 조치 기록 후 관리자 확인 필요':'복구 조건 미충족 또는 확인 필요','read-note'));layout.append(prom)}
+ if(d.monitoring){const m=d.monitoring,prom=E('div',undefined,'incident-prometheus-summary'),closed=d.status==='closed',stored=closed?window.SchutzIncidentContext.closedMonitoring(d):null;prom.append(E('h4',closed?'Prometheus 경보 · 종료 전 저장 근거':'Prometheus 경보'),E('b',m.alert_name||'경보 정보 미확인'));const labels={firing:'발생 중',pending:'발생 대기',normal:'정상 지표 확인',unknown:'미확인'};prom.append(E('p',closed?'저장 상태: '+(stored?labels[stored.state]:'근거 미제공'):'상태: '+(labels[m.state]||'수집 미확인')));const meta=E('dl',undefined,'incident-status-meta');meta.append(E('dt',closed?'근거 관측 시각':'마지막 평가'),E('dd',contextDate(closed?stored?.at:m.last_evaluated_at)+' (KST)'));prom.append(meta,E('p',closed?'제공된 근거 중 종료 이전 마지막 기록입니다. 현재 상태나 종료 당시 복구 완료를 보증하지 않습니다.':m.recovery_confirmed?'복구 신호 확인 · 조치 기록 후 관리자 확인 필요':'복구 조건 미충족 또는 확인 필요','read-note'));layout.append(prom)}
  box.append(layout);return box;
 }
 function evidencePanel(d){
@@ -342,5 +342,6 @@ async function boot(){$('#auth-message').textContent='로그인 상태를 확인
  catch(e){app.hidden=true;$('#auth-screen').hidden=false;$('#auth-message').textContent='연결 확인 실패 · '+e.message;$('#auth-retry').hidden=false}}
 boot();
 })();
+
 
 
