@@ -45,7 +45,7 @@ DETAIL_LOKI={
  'proxy_p95':'quantile_over_time(0.95,{service="portal-nginx"} | json | unwrap request_time | __error__="" [5m]) by (route)',
  'upstream_p95':'quantile_over_time(0.95,{service="portal-nginx"} | json | unwrap upstream_response_time | __error__="" [5m]) by (route)',
 }
-VISIBLE_JOBS={'prometheus','portal-otel','blackbox-exporter','portal-health','portal-db-health','ec2-node'}
+VISIBLE_JOBS={'prometheus','portal-otel','portal-health','portal-db-health','ec2-node'}
 RESOURCE={
  'cpu':'100 * (1 - avg by (instance) (rate(node_cpu_seconds_total{job="ec2-node",mode="idle"}[5m])))',
  'memory':'100 * (1 - node_memory_MemAvailable_bytes{job="ec2-node"} / node_memory_MemTotal_bytes{job="ec2-node"})',
