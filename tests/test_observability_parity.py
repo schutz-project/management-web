@@ -185,5 +185,10 @@ class CustomRangeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(observer.collect.await_count,2)
         self.assertEqual(len(observer.cache),1)
 
+    def test_retired_blackbox_job_is_not_visible(self):
+        from management.observability import VISIBLE_JOBS
+        self.assertNotIn('blackbox-exporter', VISIBLE_JOBS)
+        self.assertTrue({'portal-otel', 'portal-health', 'portal-db-health', 'ec2-node'} <= VISIBLE_JOBS)
+
 if __name__ == "__main__":
     unittest.main()
