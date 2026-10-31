@@ -116,3 +116,4 @@
 .incident-workspace .tone-info,.incident-list-v31 .tone-info{color:#075fae}
 .incident-workspace .tone-success,.incident-list-v31 .tone-success{color:#006e4d}
 .incident-workspace .read-stat p,.view-panel:has(.incident-list-v31)>.read-muted{font-size:13px;color:#4b6078;line-height:1.75}
+.host-overview{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;padding:16px}.host-overview-card{display:flex;flex-direction:column;align-items:flex-start;gap:8px;padding:16px;text-align:left;border:1px solid #cbd5e1;border-radius:10px;background:transparent;color:inherit;cursor:pointer}.host-overview-card[aria-pressed="true"]{outline:2px solid #2563eb}.host-overview-card small{overflow-wrap:anywhere}

@@ -45,6 +45,13 @@ jobs:
           NODE_PATH: ${{ runner.temp }}/schutz-browser-tools/node_modules
         run: node tests/capture-incident-ui.cjs
 
+      - name: Verify dual-host browser interactions with local fixtures
+        env:
+          NODE_PATH: ${{ runner.temp }}/schutz-browser-tools/node_modules
+        run: |
+          node tests/capture-dual-host-ui.cjs
+          node --test tests/check-dual-host-browser-failures.cjs
+
       - name: Save isolated incident UI screenshots
         if: always()
         uses: actions/upload-artifact@v4
@@ -74,6 +81,13 @@ jobs:
           -v "$PWD/tests:/tests:ro"
           schutz-management-web:ci
           python -m unittest discover -s /tests -p test_observability_parity.py
+
+      - name: Check dual-host inventory and source timestamps
+        run: >
+          docker run --rm --network none
+          -v "$PWD/tests:/tests:ro"
+          schutz-management-web:ci
+          python -m unittest discover -s /tests -p 'test_host_*.py'
 
       - name: Prometheus incident closure policy tests
         run: >
