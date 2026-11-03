@@ -84,6 +84,31 @@ const server=http.createServer((req,res)=>{
    assert.equal(restored.get('end'),expectedEnd);
    assert(observationQueries.slice(previousQueries).some(query=>{const q=new URLSearchParams(query);return q.get('window')==='custom'&&q.get('start')===expectedStart&&q.get('end')===expectedEnd}));
    assert.match(await page.locator('.resource-detail-header').textContent(),/모니터링 서버/);
+   // Global navigation opens details directly; switch services only within the page.
+   const serviceNav=page.locator('.nav>a').nth(2);
+   if(width===1440){await serviceNav.focus();await page.keyboard.press('Enter')}else await serviceNav.click();
+   await page.locator('#service-analysis-panel').waitFor();
+   assert.equal(await page.locator('.nav .sub').count(),0);
+   assert.equal(await page.locator('.nav>a').nth(2).getAttribute('aria-expanded'),null);
+   assert.equal(await page.locator('.heading h1').textContent(),'서비스 모니터링');
+   const tabs=page.locator('.service-tabs button');
+   assert.equal(await tabs.count(),3);
+   const first=await tabs.nth(0).boundingBox(),last=await tabs.nth(2).boundingBox();
+   assert(first&&last&&Math.abs(first.y-last.y)<2,width+'px services must share one row');
+   await tabs.nth(0).focus();await page.keyboard.press('ArrowRight');
+   await page.waitForURL(/service=database/);
+   assert.equal(await page.locator('#service-tab-database').evaluate(e=>e===document.activeElement),true);
+   await tabs.nth(2).click();await page.waitForURL(/service=proxy/);
+   assert.match(await page.locator('.service-analysis-head').textContent(),/Nginx/);
+   await page.goBack();await page.locator('#service-analysis-panel').waitFor();
+   assert.match(await page.locator('.service-analysis-head').textContent(),/PostgreSQL/);
+   await page.reload();await page.locator('#service-analysis-panel').waitFor();
+   assert.match(await page.locator('.service-analysis-head').textContent(),/PostgreSQL/);
+   const serviceParams=new URLSearchParams(page.url().split('#')[1]);
+   assert.equal(serviceParams.get('start'),expectedStart);
+   assert.equal(serviceParams.get('end'),expectedEnd);
+   const serviceOverflow=await page.locator('.view-panel').evaluate(e=>({client:e.clientWidth,scroll:e.scrollWidth}));
+   assert(serviceOverflow.scroll<=serviceOverflow.client+2,width+'px service panel horizontal overflow');
    await context.close();
   }
   hosts=[host('service','example-service',12,34,48),{...host('monitoring','example-monitoring',55,42,53),status:'stale',cpu:null,memory:null,disk:null,last_collected_at:'2026-01-01T00:00:00Z'}];
@@ -97,6 +122,6 @@ const server=http.createServer((req,res)=>{
   assert.doesNotMatch(await stale.locator('.host-overview-card').nth(1).textContent(),/CPU 0 %/);
   await staleContext.close();
   assert.deepEqual(errors,[]);assert(requests.every(x=>x.startsWith('GET ')));
-  console.log('PASS: 1440/390px selection, detail URL/reload, custom range URL/API/reload, stale/no-data, no JS error or POST; isolated loopback fixture');
+  console.log('PASS: 1440/390px host and direct service navigation, horizontal service buttons/keyboard/history/reload, custom range, stale/no-data; no JS error or POST; isolated loopback fixture');
  }finally{await browser.close();server.close()}
 })().catch(error=>{console.error(error);server.close();process.exitCode=1});
