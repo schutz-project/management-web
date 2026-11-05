@@ -1,7 +1,8 @@
 import json
+from datetime import datetime, timezone
 from fastapi import Request
 from fastapi.responses import FileResponse
-from sqlalchemy import select,func
+from sqlalchemy import select,func,or_
 from portal.main import create_app as portal_app, ApiError, invalid, ROOT
 from portal.models import now
 from management.models import Target, Incident, Evidence, IncidentEvidence, Action, Job, Attempt, PrometheusAlertState
@@ -71,11 +72,60 @@ def create_app(settings=None,engine=None,metric_readers=None,observer=None):
             admin(request,db); servers=[]; current=now()
             for row in db.scalars(select(Target).where(Target.id.in_(['proxy','app','database','portal-login'])).order_by(Target.id)):
                 checked=row.log_collection_at if row.id=='portal-login' else row.collection_at
-                stale=not checked or (current-utc(checked)).total_seconds()>60
-                status='unknown' if stale else ('normal' if row.id=='portal-login' or row.last_ok and row.duration_ms<=2000 else 'abnormal')
-                servers.append({'target_id':row.id,'status':status,'last_checked_at':stamp(checked),'collection_delayed':stale,'duration_ms':row.duration_ms})
+                age=(current-utc(checked)).total_seconds() if checked else None
+                # collection_delayed only marks samples older than 60 seconds.
+                # Missing or future timestamps outside tolerance produce unknown status.
+                collection_delayed=age is not None and age>60
+                valid=age is not None and -5<=age<=60 and (row.id=='portal-login' or row.last_ok is not None)
+                status='unknown' if not valid else ('normal' if row.id=='portal-login' or row.last_ok and row.duration_ms is not None and row.duration_ms<=2000 else 'abnormal')
+                result={'target_id':row.id,'status':status,'last_checked_at':stamp(checked),'collection_delayed':collection_delayed,'duration_ms':row.duration_ms}
+                if row.id=='proxy' and valid:
+                    evidence=db.get(Evidence,'probe:proxy:'+str(row.last_sample))
+                    if evidence and utc(evidence.occurred_at)==utc(checked):
+                        code=evidence.payload.get('status_code')
+                        if type(code) is int and 100<=code<=599:
+                            result['http_status']=code
+                servers.append(result)
             counts={k:db.scalar(select(func.count()).select_from(Incident).where(Incident.status==k)) for k in ['new','accepted','in_progress','closed']}
             return {'as_of':stamp(current),'servers':servers,'incident_counts':counts}
+    @app.get('/api/dashboard/incident-overview')
+    def incident_overview(request:Request,window:str='15m',start:str|None=None,end:str|None=None):
+        from management.observability import WINDOWS, custom_bounds
+        current=now().timestamp()
+        if window=='custom':
+            try:
+                first,last,_=custom_bounds(start,end,now=current)
+            except ValueError: invalid('range')
+        elif window in WINDOWS and start is None and end is None:
+            last=current
+            first=last-WINDOWS[window][0]
+        else:
+            invalid('range')
+        lower=datetime.fromtimestamp(first,timezone.utc)
+        upper=datetime.fromtimestamp(last,timezone.utc)
+        with factory.begin() as db:
+            admin(request,db)
+            rows=db.execute(select(Incident.detected_at,Incident.closed_at,Incident.rule_id).where(
+                Incident.synthetic.is_(False),
+                or_((Incident.detected_at>=lower)&(Incident.detected_at<=upper),
+                    (Incident.closed_at>=lower)&(Incident.closed_at<=upper))))
+            step=(last-first)/12
+            buckets=[{'start':stamp(datetime.fromtimestamp(first+i*step,timezone.utc)),
+                      'detected':0,'closed':0} for i in range(12)]
+            types={'delay':0,'collection':0,'other':0}
+            for detected,closed,rule in rows:
+                for name,at in (('detected',detected),('closed',closed)):
+                    if at is None:
+                        continue
+                    seconds=utc(at).timestamp()
+                    if not first<=seconds<=last:
+                        continue
+                    buckets[min(11,int((seconds-first)/step))][name]+=1
+                    if name=='detected':
+                        kind={'response_delay':'delay',
+                              'monitoring_target_down':'collection','portal_telemetry_missing':'collection'}.get(rule,'other')
+                        types[kind]+=1
+            return {'start':stamp(lower),'end':stamp(upper),'buckets':buckets,'types':types}
     @app.get('/api/observability')
     async def observability(request:Request,window:str='15m',start:str|None=None,end:str|None=None):
         with factory.begin() as db: admin(request,db)

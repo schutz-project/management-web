@@ -38,6 +38,7 @@ async function review(width,data,run){
    if(['/local/status','/api/management/capabilities'].includes(url.pathname))body={mode:'live',writes_enabled:false};
    else if(url.pathname==='/api/auth/context')body={user:{username:'fixture-admin',role:'admin'},csrf_token:'fixture-only'};
    else if(url.pathname==='/api/dashboard')body={as_of:at,incident_counts:{new:0,accepted:0,in_progress:0,closed:0},servers:[]};
+   else if(url.pathname==='/api/dashboard/incident-overview')body={};
    else if(url.pathname==='/api/observability')body={...structuredClone(fixture),as_of:at,resources:data};
    else if(url.pathname==='/api/incidents')body={items:[],total:0,page:1,page_count:1,page_size:20,counts:{new:0,accepted:0,in_progress:0,closed:0}};
    if(body!==undefined){await route.fulfill({json:body});return;}
@@ -49,20 +50,20 @@ async function review(width,data,run){
  }finally{await context.close();}
 }
 async function dashboard(p){await p.goto(base+'/#view=dashboard');await p.locator('.host-overview-card').nth(1).waitFor();}
-async function detail(p){await p.locator('.resources .resource-detail-link').first().click();await p.locator('.resource-detail-header').waitFor();}
+async function detail(p){await p.locator('.resources .resource-detail-link').last().click();await p.locator('.resource-detail-header').waitFor();}
 const current=p=>p.locator('.resource-analysis-current');
 for(const width of [1440,390]){
  test(width+'px: metadata failure preserves metrics without inventing role',{timeout:20000},async()=>{
   const data=resources();data.status='partial';data.metadata_status='unavailable';Object.assign(data.items[1],{server_role:'unknown',server_name:'역할 미지정 서버',metadata_status:'unavailable'});
-  await review(width,data,async p=>{await dashboard(p);const card=p.locator('.host-overview-card').nth(1);const text=await card.textContent();assert.match(text,/서버 역할 조회 실패/);assert.match(text,/역할 미지정 서버/);assert.doesNotMatch(text,/모니터링 서버/);await card.click();assert.equal(await p.locator('.resources .res-value').first().textContent(),'55 %');});
+  await review(width,data,async p=>{await dashboard(p);const card=p.locator('.host-overview-card').nth(1);assert.match(await card.textContent(),/서버 역할 조회 실패/);assert.deepEqual(await card.locator('.res-value').allTextContents(),['—','—','—']);await p.goto(base+'/#view=resources&host=fixture-monitoring');await p.locator('.resource-detail-header').waitFor();assert.match(await p.locator('.resource-detail-header').textContent(),/역할 미지정 서버/);assert.equal(await current(p).textContent(),'55 %');});
  });
  test(width+'px: CPU failure preserves memory and disk',{timeout:20000},async()=>{
   const data=resources();data.status='partial';data.items[1].cpu=null;data.items[1].history.cpu={status:'unavailable',points:[]};
-  await review(width,data,async p=>{await dashboard(p);await p.locator('.host-overview-card').nth(1).click();const values=p.locator('.resources .res-value');assert.deepEqual(await values.allTextContents(),['조회 실패','42 %','53 %']);await detail(p);assert.match(await current(p).textContent(),/미확인/);assert.match(await p.locator('.resource-analysis-heading').textContent(),/조회 실패/);await p.getByRole('tab',{name:'메모리',exact:true}).click();assert.equal(await current(p).textContent(),'42 %');});
+  await review(width,data,async p=>{await dashboard(p);const values=p.locator('.host-overview-card').nth(1).locator('.res-value');assert.deepEqual(await values.allTextContents(),['—','42 %','53 %']);await detail(p);assert.match(await current(p).textContent(),/미확인/);assert.match(await p.locator('.resource-analysis-heading').textContent(),/조회 실패/);await p.getByRole('tab',{name:'메모리',exact:true}).click();assert.equal(await current(p).textContent(),'42 %');});
  });
  test(width+'px: unavailable status hides retained old numeric values',{timeout:20000},async()=>{
   const data=resources();data.status='unavailable';data.items[1].status='unavailable';
-  await review(width,data,async p=>{await dashboard(p);const card=p.locator('.host-overview-card').nth(1);await card.click();assert.match(await card.textContent(),/조회 실패/);assert.doesNotMatch(await card.textContent(),/CPU 55 %/);assert.deepEqual(await p.locator('.resources .res-value').allTextContents(),['조회 실패','조회 실패','조회 실패']);await detail(p);assert.match(await current(p).textContent(),/미확인/);});
+  await review(width,data,async p=>{await dashboard(p);const card=p.locator('.host-overview-card').nth(1);assert.match(await card.textContent(),/조회 실패/);assert.doesNotMatch(await card.textContent(),/CPU 55 %/);assert.deepEqual(await card.locator('.res-value').allTextContents(),['—','—','—']);await detail(p);assert.match(await current(p).textContent(),/미확인/);});
  });
  test(width+'px: host and keyboard tab survive Back Forward and reload',{timeout:20000},async()=>{
   await review(width,resources(),async p=>{
