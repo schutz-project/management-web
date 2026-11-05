@@ -50,31 +50,43 @@ async function review(width,data,run){
  }finally{await context.close();}
 }
 async function dashboard(p){await p.goto(base+'/#view=dashboard');await p.locator('.host-overview-card').nth(1).waitFor();}
-async function detail(p){await p.locator('.resources .resource-detail-link').last().click();await p.locator('.resource-detail-header').waitFor();}
-const current=p=>p.locator('.resource-analysis-current');
+async function detail(p){await p.locator('.resources .resource-detail-link').last().click();await p.locator('.resource-compare-selected').waitFor();}
+const current=p=>p.locator('.resource-compare-selected dd').first();
 for(const width of [1440,390]){
  test(width+'px: metadata failure preserves metrics without inventing role',{timeout:20000},async()=>{
   const data=resources();data.status='partial';data.metadata_status='unavailable';Object.assign(data.items[1],{server_role:'unknown',server_name:'역할 미지정 서버',metadata_status:'unavailable'});
-  await review(width,data,async p=>{await dashboard(p);const card=p.locator('.host-overview-card').nth(1);assert.match(await card.textContent(),/서버 역할 조회 실패/);assert.deepEqual(await card.locator('.res-value').allTextContents(),['—','—','—']);await p.goto(base+'/#view=resources&host=fixture-monitoring');await p.locator('.resource-detail-header').waitFor();assert.match(await p.locator('.resource-detail-header').textContent(),/역할 미지정 서버/);assert.equal(await current(p).textContent(),'55 %');});
+  await review(width,data,async p=>{await dashboard(p);const card=p.locator('.host-overview-card').nth(1);assert.match(await card.textContent(),/서버 역할 조회 실패/);assert.deepEqual(await card.locator('.res-value').allTextContents(),['—','—','—']);await p.goto(base+'/#view=resources&host=fixture-monitoring');await p.locator('.resource-compare').waitFor();assert.match(await p.locator('.resource-compare-host').nth(1).textContent(),/수집 대상 미확인/);assert.equal(await p.locator('.resource-compare-selected').count(),0);});
  });
  test(width+'px: CPU failure preserves memory and disk',{timeout:20000},async()=>{
   const data=resources();data.status='partial';data.items[1].cpu=null;data.items[1].history.cpu={status:'unavailable',points:[]};
-  await review(width,data,async p=>{await dashboard(p);const values=p.locator('.host-overview-card').nth(1).locator('.res-value');assert.deepEqual(await values.allTextContents(),['—','42 %','53 %']);await detail(p);assert.match(await current(p).textContent(),/미확인/);assert.match(await p.locator('.resource-analysis-heading').textContent(),/조회 실패/);await p.getByRole('tab',{name:'메모리',exact:true}).click();assert.equal(await current(p).textContent(),'42 %');});
+  await review(width,data,async p=>{await dashboard(p);const values=p.locator('.host-overview-card').nth(1).locator('.res-value');assert.deepEqual(await values.allTextContents(),['—','42 %','53 %']);await detail(p);assert.match(await current(p).textContent(),/미확인/);assert.match(await p.locator('.resource-compare-selected').textContent(),/조회 실패/);const valuesByMetric=p.locator('.resource-compare-host').nth(1).locator('.resource-compare-metric');assert.match(await valuesByMetric.nth(1).textContent(),/42 %/);assert.match(await valuesByMetric.nth(2).textContent(),/53 %/);});
  });
  test(width+'px: unavailable status hides retained old numeric values',{timeout:20000},async()=>{
   const data=resources();data.status='unavailable';data.items[1].status='unavailable';
   await review(width,data,async p=>{await dashboard(p);const card=p.locator('.host-overview-card').nth(1);assert.match(await card.textContent(),/조회 실패/);assert.doesNotMatch(await card.textContent(),/CPU 55 %/);assert.deepEqual(await card.locator('.res-value').allTextContents(),['—','—','—']);await detail(p);assert.match(await current(p).textContent(),/미확인/);});
  });
- test(width+'px: host and keyboard tab survive Back Forward and reload',{timeout:20000},async()=>{
+ test(width+'px: resource deep link selects a comparison metric',{timeout:20000},async()=>{
   await review(width,resources(),async p=>{
-   await p.goto(base+'/#view=resources&host=fixture-service&resource=cpu');const select=p.getByLabel('메트릭 수집 대상');await select.waitFor();await select.selectOption('fixture-monitoring');
-   const cpu=p.getByRole('tab',{name:'CPU',exact:true});await cpu.focus();await cpu.press('End');assert.match(await p.locator('.resource-analysis-heading').textContent(),/루트 디스크/);assert.equal(await current(p).textContent(),'53 %');
-   await p.goBack();await p.waitForFunction(()=>new URLSearchParams(location.hash.slice(1)).get('resource')==='cpu');assert.equal(await p.getByLabel('메트릭 수집 대상').inputValue(),'fixture-monitoring');assert.equal(await current(p).textContent(),'55 %');
-   await p.goBack();await p.waitForFunction(()=>new URLSearchParams(location.hash.slice(1)).get('host')==='fixture-service');assert.equal(await current(p).textContent(),'12 %');
-   await p.goForward();await p.waitForFunction(()=>new URLSearchParams(location.hash.slice(1)).get('host')==='fixture-monitoring');assert.equal(await current(p).textContent(),'55 %');
-   await p.goForward();await p.waitForFunction(()=>new URLSearchParams(location.hash.slice(1)).get('resource')==='disk');assert.equal(await current(p).textContent(),'53 %');
-   await p.reload();await p.locator('.resource-detail-header').waitFor();assert.equal(await p.getByLabel('메트릭 수집 대상').inputValue(),'fixture-monitoring');assert.equal(await current(p).textContent(),'53 %');
-   const bounds=await p.locator('.view-panel').evaluate(e=>[e.scrollWidth,e.clientWidth]);assert(bounds[0]<=bounds[1]+2,'panel horizontal overflow');
+   await p.goto(base+'/#view=resources&host=fixture-monitoring&resource=disk');
+   await p.locator('.resource-compare-selected').waitFor();
+   assert.match(await p.locator('.resource-compare-selected').textContent(),/루트 디스크/);
+   assert.equal(await current(p).textContent(),'53 %');
+   await p.reload();
+   await p.locator('.resource-compare-selected').waitFor();
+   assert.equal(await current(p).textContent(),'53 %');
+   assert.equal(await p.locator('.resource-analysis-panel').count(),0);
+   const bounds=await p.locator('.view-panel').evaluate(e=>[e.scrollWidth,e.clientWidth]);
+   assert(bounds[0]<=bounds[1]+2,'panel horizontal overflow');
+  });
+ });
+ test(width+'px: route, log and collection tables fit their panels',{timeout:20000},async()=>{
+  await review(width,resources(),async p=>{
+   for(const [view,selector] of [['services&service=proxy','.phase3-route-table'],['logs','.phase3-log-grid'],['collectors','.phase3-target-table']]){
+    await p.goto(base+'/#view='+view);
+    await p.locator(selector).waitFor();
+    const bounds=await p.locator('.view-panel').evaluate(e=>[e.scrollWidth,e.clientWidth]);
+    assert(bounds[0]<=bounds[1]+2,view+' panel horizontal overflow');
+   }
   });
  });
 }

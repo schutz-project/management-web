@@ -2,7 +2,7 @@ import unittest
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
-from management.observability import Observer, NODE_SOURCE_QUERY, RESOURCE, source_time
+from management.observability import Observer, NODE_SOURCE_QUERY, RESOURCE, SCRAPE_TARGET_QUERY, source_time
 from test_observability_parity import ResourceClient, Response
 
 
@@ -21,7 +21,7 @@ class HostClient(ResourceClient):
             return Response({'status': 'success', 'data': {'result': [
                 {'metric': {'instance': 'service:9100'},
                  'value': [params['time'], str(params['time']-self.age)]}]}})
-        if query == 'up':
+        if query == SCRAPE_TARGET_QUERY:
             if self.metadata_fail:
                 raise TimeoutError('metadata')
             return Response({'status': 'success', 'data': {'result': [

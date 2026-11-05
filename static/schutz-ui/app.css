@@ -205,3 +205,24 @@
 .collector-preview-scroll{overflow-x:auto}
 .collector-preview .read-table{min-width:270px}
 @media(max-width:420px){.monitoring-path-grid{grid-template-columns:minmax(0,1fr)}}
+
+.phase3-table-scroll{overflow-x:auto}
+.phase3-route-table{min-width:42rem}
+.phase3-route-table td:first-child,.phase3-target-table td{overflow-wrap:anywhere}
+.phase3-route-table .route-plot{min-width:4rem}
+.phase3-target-table{min-width:48rem}
+.phase3-collection-error{display:block;margin-top:.25rem}
+.phase3-log-toolbar,.phase3-log-toolbar label{display:flex;gap:.75rem;align-items:center;flex-wrap:wrap}
+.phase3-log-toolbar input[type=search]{flex:1;min-width:12rem}
+.phase3-log-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem;margin-top:1rem}
+.phase3-log-row{display:grid;grid-template-columns:minmax(4.2rem,auto) minmax(0,1fr) minmax(3rem,auto) minmax(4.5rem,auto);align-items:center;gap:.5rem;padding:.6rem;cursor:pointer}
+.phase3-log-row span{overflow-wrap:anywhere}
+.phase3-log-head,.phase3-log-selected{background:#eef5ff}
+.phase3-log-selected{border-radius:.4rem}
+.resource-compare-selected{outline:2px solid #1879ee;outline-offset:-2px}
+@media(max-width:850px){.phase3-log-grid{grid-template-columns:1fr}}
+@media(min-width:901px){
+ .service-health-grid{gap:22px}
+ .service-health-card{position:relative}
+ .service-health-card:not(:last-child)::after{content:'→';position:absolute;right:-19px;top:calc(50% - .75em);color:#6982a1}
+}
