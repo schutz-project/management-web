@@ -10,6 +10,7 @@ const fixture=JSON.parse(fs.readFileSync(path.join(__dirname,'fixtures/monitorin
 const at=new Date().toISOString(),ms=Date.now();
 const history=value=>({status:'ok',points:[[ms-60000,value-1],[ms-30000,value],[ms,value]]});
 const host=(role,instance,cpu,memory,disk,status='ok')=>({server_role:role,server_name:role==='service'?'서비스 서버':'모니터링 서버',host_id:instance,instance,status,cpu,memory,disk,last_collected_at:at,history:{cpu:history(cpu),memory:history(memory),disk:history(disk)}});
+const recent={id:'fixture-delay',target_id:'database',rule_id:'response_delay',status:'closed',synthetic:false,detected_at:new Date(ms-240000).toISOString()};
 let hosts=[host('service','example-service',12,34,48),host('monitoring','example-monitoring',55,42,53)];
 const errors=[],requests=[],observationQueries=[];
 const server=http.createServer((req,res)=>{
@@ -19,9 +20,11 @@ const server=http.createServer((req,res)=>{
  if(url.pathname==='/local/status')data={mode:'live',writes_enabled:false};
  else if(url.pathname==='/api/auth/context')data={user:{username:'검수 관리자',role:'admin'},csrf_token:'fixture-only'};
  else if(url.pathname==='/api/management/capabilities')data={mode:'live',writes_enabled:false};
- else if(url.pathname==='/api/dashboard')data={as_of:at,incident_counts:{new:0,accepted:0,in_progress:0,closed:0},servers:[]};
+ else if(url.pathname==='/api/dashboard')data={as_of:at,incident_counts:{new:0,accepted:0,in_progress:0,closed:5},servers:['app','database','proxy'].map(target_id=>({target_id,status:'normal',last_checked_at:at,...target_id==='proxy'&&{http_status:200}}))};
+ else if(url.pathname==='/api/dashboard/incident-overview')data={start:new Date(ms-900000).toISOString(),end:at,buckets:Array.from({length:12},(_,i)=>({start:new Date(ms-900000+i*75000).toISOString(),detected:[0,0,1,2,0,1,0,0,1,0,0,0][i],closed:[0,0,0,0,1,1,2,0,0,1,0,0][i]})),types:{delay:2,collection:2,other:1}};
  else if(url.pathname==='/api/observability'){observationQueries.push(url.searchParams.toString());data={...fixture,as_of:url.searchParams.get('end')||at,resources:{status:'ok',items:hosts}}}
- else if(url.pathname==='/api/incidents')data={items:[],total:0,page:1,page_size:20,page_count:1,counts:{new:0,accepted:0,in_progress:0,closed:0}};
+ else if(url.pathname==='/api/incidents')data={items:url.searchParams.get('status')==='closed'?[recent]:[],total:1,page:1,page_size:20,page_count:1,counts:{new:0,accepted:0,in_progress:0,closed:5}};
+ else if(url.pathname==='/api/incidents/fixture-delay')data={...recent,jobs:[{kind:'ai',status:'succeeded',result:{summary:'검수 예시입니다. DB 기능 점검에서 응답 지연이 관측된 뒤 정상 범위로 돌아왔습니다.'}}]};
  if(data){res.setHeader('content-type','application/json');res.end(JSON.stringify(data));return}
  const relative=url.pathname==='/'?'static/schutz-ui/index.html':decodeURIComponent(url.pathname).replace(/^\//,'');
  const file=path.resolve(root,relative);
@@ -48,9 +51,21 @@ const server=http.createServer((req,res)=>{
    await page.goto(base+'/#view=dashboard');
    await page.locator('.host-overview-card').first().waitFor();
    assert.equal(await page.locator('.host-overview-card').count(),2);
-   await page.locator('.host-overview-card').nth(1).click();
-   assert.match(await page.locator('.resources .resource .res-value').first().textContent(),/55/);
-   await page.locator('.resources .resource-detail-link').first().click();
+   assert.equal(await page.locator('.dashboard-gauge').count(),6);
+   const monitoring=page.locator('.host-overview-card').nth(1);
+   assert.match(await monitoring.locator('.res-value').first().textContent(),/55/);
+   assert.match(await page.locator('.service-health-card.service-proxy').textContent(),/HTTP 200/);
+   assert.match(await page.locator('.incident-trend').textContent(),/발생 5건/);
+   const layout=await page.locator('.dashboard-view').evaluate(e=>[e.scrollWidth,e.clientWidth]);
+   assert(layout[0]<=layout[1]+2,width+'px dashboard horizontal overflow');
+   if(process.env.SCHUTZ_PREVIEW_DIR){
+    await page.getByText('검수 예시입니다.',{exact:false}).waitFor();
+    await page.addStyleTag({content:'body{font-family:"Noto Sans KR",sans-serif!important}'});
+    await page.locator('.demo-ribbon').evaluate(e=>e.textContent='배포 전 검수 · 테스트 데이터');
+    await page.locator('.profile').evaluate(e=>e.textContent='검수 관리자');
+    await page.screenshot({path:path.join(process.env.SCHUTZ_PREVIEW_DIR,'SCHUTZ-dashboard-'+width+'.png'),fullPage:true});
+   }
+   await monitoring.locator('.resource-detail-link').click();
    await page.locator('.resource-detail-header').waitFor();
    assert.match(page.url(),/host=example-monitoring/);
    assert.match(await page.locator('.resource-detail-header').textContent(),/모니터링 서버/);
@@ -116,7 +131,7 @@ const server=http.createServer((req,res)=>{
   await stale.goto(base+'/#view=dashboard');await stale.locator('.host-overview-card').nth(1).waitFor();
   assert.match(await stale.locator('.host-overview-card').nth(1).textContent(),/수집 지연/);
   assert.doesNotMatch(await stale.locator('.host-overview-card').nth(1).textContent(),/CPU 0 %/);
-  hosts=[host('service','example-service',12,34,48),{...host('monitoring','example-monitoring',55,42,53),host_id:'expected:monitoring',instance:null,status:'no_data',cpu:null,memory:null,disk:null,last_collected_at:null,history:{}}];
+  hosts=[host('service','example-service',12,34,48),{...host('monitoring','example-monitoring',55,42,53),host_id:'expected:monitoring',instance:null,expected:true,status:'no_data',cpu:null,memory:null,disk:null,last_collected_at:null,history:{}}];
   await stale.reload();await stale.locator('.host-overview-card').nth(1).waitFor();
   assert.match(await stale.locator('.host-overview-card').nth(1).textContent(),/수집 대상 미설정/);
   assert.doesNotMatch(await stale.locator('.host-overview-card').nth(1).textContent(),/CPU 0 %/);

@@ -94,3 +94,39 @@ class IncidentListTests(IncidentActionFixture):
 
 
 if __name__=='__main__':unittest.main()
+
+class DashboardOverviewTests(IncidentActionFixture):
+    def test_selected_period_counts_detected_and_closed_independently(self):
+        moment=now()
+        with self.factory.begin() as db:
+            db.add_all([
+                Incident(target_id='app',rule_id='response_delay',detected_at=moment-timedelta(minutes=3)),
+                Incident(target_id='proxy',rule_id='monitoring_target_down',status='closed',
+                         detected_at=moment-timedelta(hours=2),closed_at=moment-timedelta(minutes=1)),
+                Incident(target_id='app',rule_id='response_delay',synthetic=True,
+                         detected_at=moment-timedelta(minutes=2)),
+            ])
+        url='/api/dashboard/incident-overview'
+        self.assertEqual(self.client.get(url).status_code,401)
+        self.login_cookie()
+        result=self.client.get(url,params={'window':'custom','start':(moment-timedelta(minutes=10)).isoformat(),'end':moment.isoformat()})
+        self.assertEqual(result.status_code,200)
+        data=result.json()
+        self.assertEqual(len(data['buckets']),12)
+        self.assertEqual(sum(b['detected'] for b in data['buckets']),1)
+        self.assertEqual(sum(b['closed'] for b in data['buckets']),1)
+        self.assertEqual(data['types'],{'delay':1,'collection':0,'other':0})
+
+    def test_dashboard_uses_http_status_from_the_same_fresh_proxy_probe(self):
+        from management.domain import record_probe
+        moment=now()
+        with self.factory.begin() as db:
+            record_probe(db,'proxy',1234.5,True,15,moment,status_code=200)
+            record_probe(db,'app',1234.5,True,15,moment-timedelta(seconds=120))
+            db.add(Target(id='database'))
+        self.login_cookie()
+        rows={row['target_id']:row for row in self.client.get('/api/dashboard').json()['servers']}
+        self.assertEqual(rows['proxy']['http_status'],200)
+        self.assertTrue(rows['app']['collection_delayed'])
+        self.assertFalse(rows['database']['collection_delayed'])
+        self.assertEqual(rows['database']['status'],'unknown')

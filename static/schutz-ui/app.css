@@ -117,3 +117,49 @@
 .incident-workspace .tone-success,.incident-list-v31 .tone-success{color:#006e4d}
 .incident-workspace .read-stat p,.view-panel:has(.incident-list-v31)>.read-muted{font-size:13px;color:#4b6078;line-height:1.75}
 .host-overview{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;padding:16px}.host-overview-card{display:flex;flex-direction:column;align-items:flex-start;gap:8px;padding:16px;text-align:left;border:1px solid #cbd5e1;border-radius:10px;background:transparent;color:inherit;cursor:pointer}.host-overview-card[aria-pressed="true"]{outline:2px solid #2563eb}.host-overview-card small{overflow-wrap:anywhere}
+
+/* Operations dashboard */
+.dashboard-overview-grid{display:grid;grid-template-columns:minmax(0,1.42fr) minmax(0,1fr);gap:14px;margin:16px 0}
+.overview-panel{min-width:0;padding:14px}
+.overview-panel .panel-head,.dashboard-resources .panel-head{padding:0 0 12px;border:0;gap:8px;flex-wrap:wrap}
+.overview-note{font-size:.75rem;color:#4f6888}
+.service-health-grid,.overview-panel .services,.dashboard-gauges{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.service-health-card{min-width:0;background:#f4f8fd;border:1px solid #dfebf7;border-radius:11px;padding:10px;display:flex;flex-direction:column;align-items:flex-start;gap:9px}
+.service-health-card h3{display:flex;align-items:center;gap:6px;margin:0;font-size:.9rem;overflow-wrap:anywhere}
+.service-health-card small,.dashboard-gauge small{font-size:.72rem;color:#4f6888}
+.service-health-result{font-size:.9rem}
+.service-status-delayed{background:#fff1d9;color:#804100}
+.overview-panel .services{margin:0}
+.overview-panel .service{padding:9px;min-width:0}
+.overview-panel .svc-head{flex-wrap:wrap;min-width:0}
+.overview-panel .service-identity{gap:5px;min-width:0;overflow-wrap:anywhere}
+.overview-panel .service-aux{grid-template-columns:1fr}
+.overview-panel .service-chart{min-height:0}
+.overview-panel .service-chart svg{height:auto;display:block}
+.incident-trend>svg{width:100%;max-height:212px}
+.incident-chart-legend{display:flex;gap:12px;flex-wrap:wrap;font-size:.8rem;font-weight:700;color:#a62d43}
+.incident-chart-legend span+span{color:#235ba6}
+.incident-breakdown{display:grid;grid-template-columns:minmax(84px,1fr) minmax(0,1.2fr);align-items:center;gap:8px}
+.incident-breakdown>svg{width:100%;max-height:190px}
+.incident-type-list{list-style:none;margin:0;padding:0;display:grid;gap:10px}
+.incident-type-list li{display:flex;flex-wrap:wrap;align-items:center;gap:5px;font-size:.78rem}
+.incident-type-list strong{margin-left:auto}
+.incident-type-list svg{width:10px;height:10px}
+.incident-breakdown>small,.incident-breakdown>.overview-empty{grid-column:1/-1}
+.overview-empty{color:#4f6888;padding:16px 0}
+.dashboard-resources{margin:16px 0}
+.dashboard-hosts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.dashboard-hosts .host-overview-card{display:block;cursor:default;padding:14px;min-width:0}
+.dashboard-host-heading{display:flex;align-items:baseline;justify-content:space-between;gap:7px;flex-wrap:wrap}
+.dashboard-host-heading h3,.dashboard-gauge h4{margin:0}
+.dashboard-host-heading small{color:#4f6888}
+.dashboard-gauge{text-align:center;min-width:0;padding:12px 2px 6px}
+.dashboard-gauge h4{font-size:.8rem;min-height:2.2em}
+.dashboard-meter{position:relative;width:min(100%,155px);margin:auto}
+.dashboard-meter svg{display:block;width:100%;height:auto}
+.dashboard-meter .res-value{position:absolute;inset:auto 0 10%;font-size:clamp(.82rem,1.65vw,1.4rem);margin:0;line-height:1}
+.gauge-scale{margin:auto;width:min(100%,145px);display:flex;justify-content:space-between;font-size:.66rem;color:#4f6888}
+@media(max-width:1200px){.dashboard-overview-grid{grid-template-columns:1fr 1fr}}
+@media(max-width:1050px){.dashboard-overview-grid{grid-template-columns:1fr}}
+@media(max-width:720px){.dashboard-hosts{grid-template-columns:1fr}}
+@media(max-width:480px){.service-health-grid,.overview-panel .services{grid-template-columns:1fr}}
