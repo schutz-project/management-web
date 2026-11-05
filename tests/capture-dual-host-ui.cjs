@@ -22,7 +22,7 @@ const server=http.createServer((req,res)=>{
  else if(url.pathname==='/api/management/capabilities')data={mode:'live',writes_enabled:false};
  else if(url.pathname==='/api/dashboard')data={as_of:at,incident_counts:{new:0,accepted:0,in_progress:0,closed:5},servers:['app','database','proxy'].map(target_id=>({target_id,status:'normal',last_checked_at:at,...target_id==='proxy'&&{http_status:200}}))};
  else if(url.pathname==='/api/dashboard/incident-overview')data={start:new Date(ms-900000).toISOString(),end:at,buckets:Array.from({length:12},(_,i)=>({start:new Date(ms-900000+i*75000).toISOString(),detected:[0,0,1,2,0,1,0,0,1,0,0,0][i],closed:[0,0,0,0,1,1,2,0,0,1,0,0][i]})),types:{delay:2,collection:2,other:1},timeline:[recent]};
- else if(url.pathname==='/api/observability'){observationQueries.push(url.searchParams.toString());data={...fixture,as_of:url.searchParams.get('end')||at,resources:{status:'ok',items:hosts}}}
+ else if(url.pathname==='/api/observability'){observationQueries.push(url.searchParams.toString());data={...fixture,as_of:url.searchParams.get('end')||at,historical:url.searchParams.get('window')==='custom',resources:{status:'ok',items:hosts}}}
  else if(url.pathname==='/api/incidents')data={items:url.searchParams.get('status')==='closed'?[recent]:[],total:1,page:1,page_size:20,page_count:1,counts:{new:0,accepted:0,in_progress:0,closed:5}};
  else if(url.pathname==='/api/incidents/fixture-delay')data={...recent,jobs:[{kind:'ai',status:'succeeded',result:{summary:'검수 예시입니다. DB 기능 점검에서 응답 지연이 관측된 뒤 정상 범위로 돌아왔습니다.'}}]};
  if(data){res.setHeader('content-type','application/json');res.end(JSON.stringify(data));return}
@@ -70,7 +70,7 @@ const server=http.createServer((req,res)=>{
     await page.screenshot({path:path.join(process.env.SCHUTZ_PREVIEW_DIR,'SCHUTZ-dashboard-'+width+'.png'),fullPage:true});
    }
    await monitoring.locator('.resource-detail-link').click();
-   await page.locator('.resource-detail-header').waitFor();
+   await page.locator('.resource-compare-selected').waitFor();
    const comparison=page.locator('.resource-compare');
    assert.equal(await comparison.locator('.resource-compare-host').count(),2);
    assert.equal(await comparison.locator('.resource-compare-metric').count(),6);
@@ -80,9 +80,9 @@ const server=http.createServer((req,res)=>{
    assert.deepEqual(axes.slice(0,3),axes.slice(3));
    assert(axes.every(label=>label.includes('미세 변화 확대')));
    assert.match(page.url(),/host=example-monitoring/);
-   assert.match(await page.locator('.resource-detail-header').textContent(),/모니터링 서버/);
-   await page.reload();await page.locator('.resource-detail-header').waitFor();
-   assert.match(await page.locator('.resource-detail-header').textContent(),/모니터링 서버/);
+   assert.match(await page.locator('.resource-compare-host').nth(1).locator('.resource-compare-selected').textContent(),/CPU/);
+   await page.reload();await page.locator('.resource-compare-selected').waitFor();
+   assert.match(await page.locator('.resource-compare-host').nth(1).locator('.resource-compare-selected').textContent(),/CPU/);
    const overflow=await page.locator('.view-panel').evaluate(e=>({client:e.clientWidth,scroll:e.scrollWidth}));
    assert(overflow.scroll<=overflow.client+2,width+'px resource panel horizontal overflow');
    const kstInput=time=>new Date(time+9*3600000).toISOString().slice(0,16);
@@ -99,18 +99,18 @@ const server=http.createServer((req,res)=>{
    assert.equal(params.get('host'),'example-monitoring');
    assert.equal(params.get('start'),expectedStart);
    assert.equal(params.get('end'),expectedEnd);
-   await page.waitForFunction(()=>document.querySelector('.resource-detail-header')?.textContent.includes('선택 시점 메트릭 확인'));
+   await page.waitForFunction(()=>document.querySelector('.resource-compare-selected')?.textContent.includes('종료 시점'));
    assert(observationQueries.some(query=>{const q=new URLSearchParams(query);return q.get('window')==='custom'&&q.get('start')===expectedStart&&q.get('end')===expectedEnd}));
    const previousQueries=observationQueries.length;
    const restoredResponse=page.waitForResponse(response=>response.url().includes('/api/observability?')&&response.status()===200);
-   await page.reload();await restoredResponse;await page.locator('.resource-detail-header').waitFor();
+   await page.reload();await restoredResponse;await page.locator('.resource-compare-selected').waitFor();
    const restored=new URLSearchParams(page.url().split('#')[1]);
    assert.equal(restored.get('host'),'example-monitoring');
    assert.equal(restored.get('window'),'custom');
    assert.equal(restored.get('start'),expectedStart);
    assert.equal(restored.get('end'),expectedEnd);
    assert(observationQueries.slice(previousQueries).some(query=>{const q=new URLSearchParams(query);return q.get('window')==='custom'&&q.get('start')===expectedStart&&q.get('end')===expectedEnd}));
-   assert.match(await page.locator('.resource-detail-header').textContent(),/모니터링 서버/);
+   assert.match(await page.locator('.resource-compare-host').nth(1).locator('.resource-compare-selected').textContent(),/CPU/);
    // Global navigation opens details directly; switch services only within the page.
    const serviceNav=page.locator('.nav>a').nth(2);
    if(width===1440){await serviceNav.focus();await page.keyboard.press('Enter')}else await serviceNav.click();
