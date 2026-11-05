@@ -130,22 +130,37 @@ def create_app(settings=None,engine=None,metric_readers=None,observer=None):
                 or_(Incident.closed_at.is_(None),Incident.closed_at>=lower),
             ).order_by(Incident.detected_at.desc(),Incident.id).limit(21)
             incidents=list(db.scalars(timeline_query))
-            observations=db.scalars(select(PrometheusAlertState).where(
-                PrometheusAlertState.incident_id.in_([row.id for row in incidents[:20]]),
-                PrometheusAlertState.state=='normal',
-                PrometheusAlertState.normal_samples>=2,
-            ))
-            from management.alert_policy import RULES
-            verified={(row.incident_id,row.target_key,RULES.get(row.rule_name)):utc(row.evaluated_at)
-                      for row in observations}
+            selected={incident.id:incident for incident in incidents[:20]}
             observed_until=min(upper,datetime.fromtimestamp(current,timezone.utc))
+            observations=db.execute(
+                select(IncidentEvidence.incident_id,Evidence.target_id,Evidence.occurred_at,Evidence.payload)
+                .join(Evidence,Evidence.id==IncidentEvidence.evidence_id)
+                .where(IncidentEvidence.incident_id.in_(selected),Evidence.kind=='prometheus',
+                       Evidence.occurred_at<=observed_until)
+                .order_by(IncidentEvidence.incident_id,Evidence.occurred_at,Evidence.id)
+            )
+            verified={}
+            last_normal={}
+            for incident_id,target_id,observed,payload in observations:
+                incident=selected[incident_id]
+                observed=utc(observed)
+                if (incident_id in verified or target_id!=incident.target_id
+                    or payload.get('rule_id')!=incident.rule_id
+                    or observed<utc(incident.detected_at)
+                    or (incident.closed_at and observed>utc(incident.closed_at))):
+                    continue
+                if payload.get('state')!='normal':
+                    last_normal.pop(incident_id,None)
+                    continue
+                previous=last_normal.get(incident_id)
+                if previous and 0<(observed-previous).total_seconds()<=60:
+                    verified[incident_id]=observed
+                last_normal[incident_id]=observed
             timeline=[]
-            for incident in incidents[:20]:
-                observed=verified.get((incident.id,incident.target_id,incident.rule_id))
+            for incident in selected.values():
                 closed=utc(incident.closed_at)
                 detected=utc(incident.detected_at)
-                recovery=observed if observed and detected<=observed<=observed_until and (
-                    closed is None or observed<=closed) else None
+                recovery=verified.get(incident.id)
                 timeline.append({'id':incident.id,'target_id':incident.target_id,
                                  'rule_id':incident.rule_id,'detected_at':stamp(detected),
                                  'recovery_checked_at':stamp(recovery),'closed_at':stamp(closed)})
