@@ -124,9 +124,12 @@ class DashboardOverviewTests(IncidentActionFixture):
             record_probe(db,'proxy',1234.5,True,15,moment,status_code=200)
             record_probe(db,'app',1234.5,True,15,moment-timedelta(seconds=120))
             db.add(Target(id='database'))
+            db.add(Target(id='portal-login',log_collection_at=moment+timedelta(seconds=30)))
         self.login_cookie()
         rows={row['target_id']:row for row in self.client.get('/api/dashboard').json()['servers']}
         self.assertEqual(rows['proxy']['http_status'],200)
         self.assertTrue(rows['app']['collection_delayed'])
         self.assertFalse(rows['database']['collection_delayed'])
         self.assertEqual(rows['database']['status'],'unknown')
+        self.assertFalse(rows['portal-login']['collection_delayed'])
+        self.assertEqual(rows['portal-login']['status'],'unknown')

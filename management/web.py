@@ -73,10 +73,12 @@ def create_app(settings=None,engine=None,metric_readers=None,observer=None):
             for row in db.scalars(select(Target).where(Target.id.in_(['proxy','app','database','portal-login'])).order_by(Target.id)):
                 checked=row.log_collection_at if row.id=='portal-login' else row.collection_at
                 age=(current-utc(checked)).total_seconds() if checked else None
-                stale=age is not None and age>60
+                # collection_delayed only marks samples older than 60 seconds.
+                # Missing or future timestamps outside tolerance produce unknown status.
+                collection_delayed=age is not None and age>60
                 valid=age is not None and -5<=age<=60 and (row.id=='portal-login' or row.last_ok is not None)
                 status='unknown' if not valid else ('normal' if row.id=='portal-login' or row.last_ok and row.duration_ms is not None and row.duration_ms<=2000 else 'abnormal')
-                result={'target_id':row.id,'status':status,'last_checked_at':stamp(checked),'collection_delayed':stale,'duration_ms':row.duration_ms}
+                result={'target_id':row.id,'status':status,'last_checked_at':stamp(checked),'collection_delayed':collection_delayed,'duration_ms':row.duration_ms}
                 if row.id=='proxy' and valid:
                     evidence=db.get(Evidence,'probe:proxy:'+str(row.last_sample))
                     if evidence and utc(evidence.occurred_at)==utc(checked):
