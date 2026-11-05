@@ -174,3 +174,13 @@ test('점검 지연·확인 불가와 근거 있는 HTTP 상태를 구분한다'
  assert.match(cards[1].querySelector('.service-badge').textContent,/확인 불가/);
  assert.match(cards[2].textContent,/HTTP 503.*점검 이상/);
 });
+
+test('기능 점검 정상과 p95 미수집을 별도 표시한다',async()=>{
+ const metric=snapshot.observability.metrics.app_ms,old=metric.status;
+ try{
+  metric.status='no_data';
+  const a=boot();await settle();
+  assert.match(a.doc.querySelector('.service-health-card .service-badge').textContent,/정상/);
+  assert.match(a.doc.querySelector('.service .svc-data').textContent,/미수집/);
+ }finally{metric.status=old}
+});
