@@ -21,7 +21,7 @@ const server=http.createServer((req,res)=>{
  else if(url.pathname==='/api/auth/context')data={user:{username:'검수 관리자',role:'admin'},csrf_token:'fixture-only'};
  else if(url.pathname==='/api/management/capabilities')data={mode:'live',writes_enabled:false};
  else if(url.pathname==='/api/dashboard')data={as_of:at,incident_counts:{new:0,accepted:0,in_progress:0,closed:5},servers:['app','database','proxy'].map(target_id=>({target_id,status:'normal',last_checked_at:at,...target_id==='proxy'&&{http_status:200}}))};
- else if(url.pathname==='/api/dashboard/incident-overview')data={start:new Date(ms-900000).toISOString(),end:at,buckets:Array.from({length:12},(_,i)=>({start:new Date(ms-900000+i*75000).toISOString(),detected:[0,0,1,2,0,1,0,0,1,0,0,0][i],closed:[0,0,0,0,1,1,2,0,0,1,0,0][i]})),types:{delay:2,collection:2,other:1}};
+ else if(url.pathname==='/api/dashboard/incident-overview')data={start:new Date(ms-900000).toISOString(),end:at,buckets:Array.from({length:12},(_,i)=>({start:new Date(ms-900000+i*75000).toISOString(),detected:[0,0,1,2,0,1,0,0,1,0,0,0][i],closed:[0,0,0,0,1,1,2,0,0,1,0,0][i]})),types:{delay:2,collection:2,other:1},timeline:[recent]};
  else if(url.pathname==='/api/observability'){observationQueries.push(url.searchParams.toString());data={...fixture,as_of:url.searchParams.get('end')||at,resources:{status:'ok',items:hosts}}}
  else if(url.pathname==='/api/incidents')data={items:url.searchParams.get('status')==='closed'?[recent]:[],total:1,page:1,page_size:20,page_count:1,counts:{new:0,accepted:0,in_progress:0,closed:5}};
  else if(url.pathname==='/api/incidents/fixture-delay')data={...recent,jobs:[{kind:'ai',status:'succeeded',result:{summary:'검수 예시입니다. DB 기능 점검에서 응답 지연이 관측된 뒤 정상 범위로 돌아왔습니다.'}}]};
@@ -56,6 +56,10 @@ const server=http.createServer((req,res)=>{
    assert.match(await monitoring.locator('.res-value').first().textContent(),/55/);
    assert.match(await page.locator('.service-health-card.service-proxy').textContent(),/HTTP 200/);
    assert.match(await page.locator('.incident-trend').textContent(),/발생 5건/);
+   assert.match(await page.locator('.incident-timeline').textContent(),/복구 미확인/);
+   assert.match(await page.locator('.monitoring-paths').textContent(),/외부 점검 미연결.*HTTP 200/);
+   assert.match(await page.locator('.collector-preview').textContent(),/Loki/);
+   assert.equal(await page.locator('.incident-breakdown + .collector-preview').count(),1);
    const layout=await page.locator('.dashboard-view').evaluate(e=>[e.scrollWidth,e.clientWidth]);
    assert(layout[0]<=layout[1]+2,width+'px dashboard horizontal overflow');
    if(process.env.SCHUTZ_PREVIEW_DIR){

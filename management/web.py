@@ -125,7 +125,32 @@ def create_app(settings=None,engine=None,metric_readers=None,observer=None):
                         kind={'response_delay':'delay',
                               'monitoring_target_down':'collection','portal_telemetry_missing':'collection'}.get(rule,'other')
                         types[kind]+=1
-            return {'start':stamp(lower),'end':stamp(upper),'buckets':buckets,'types':types}
+            timeline_query=select(Incident).where(
+                Incident.synthetic.is_(False),Incident.detected_at<=upper,
+                or_(Incident.closed_at.is_(None),Incident.closed_at>=lower),
+            ).order_by(Incident.detected_at.desc(),Incident.id).limit(21)
+            incidents=list(db.scalars(timeline_query))
+            observations=db.scalars(select(PrometheusAlertState).where(
+                PrometheusAlertState.incident_id.in_([row.id for row in incidents[:20]]),
+                PrometheusAlertState.state=='normal',
+                PrometheusAlertState.normal_samples>=2,
+            ))
+            from management.alert_policy import RULES
+            verified={(row.incident_id,row.target_key,RULES.get(row.rule_name)):utc(row.evaluated_at)
+                      for row in observations}
+            observed_until=min(upper,datetime.fromtimestamp(current,timezone.utc))
+            timeline=[]
+            for incident in incidents[:20]:
+                observed=verified.get((incident.id,incident.target_id,incident.rule_id))
+                closed=utc(incident.closed_at)
+                detected=utc(incident.detected_at)
+                recovery=observed if observed and detected<=observed<=observed_until and (
+                    closed is None or observed<=closed) else None
+                timeline.append({'id':incident.id,'target_id':incident.target_id,
+                                 'rule_id':incident.rule_id,'detected_at':stamp(detected),
+                                 'recovery_checked_at':stamp(recovery),'closed_at':stamp(closed)})
+            return {'start':stamp(lower),'end':stamp(upper),'buckets':buckets,'types':types,
+                    'timeline':timeline,'timeline_truncated':len(incidents)>20}
     @app.get('/api/observability')
     async def observability(request:Request,window:str='15m',start:str|None=None,end:str|None=None):
         with factory.begin() as db: admin(request,db)

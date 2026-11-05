@@ -2,7 +2,7 @@ import unittest
 from datetime import timedelta
 from sqlalchemy import select,func
 from sqlalchemy.dialects import postgresql
-from management.models import Incident,Job,Attempt,Evidence,IncidentEvidence,Target
+from management.models import Incident,Job,Attempt,Evidence,IncidentEvidence,Target,PrometheusAlertState
 from management.incident_list import query_conditions,severity_expression
 from portal.models import now
 from test_incident_actions import IncidentActionFixture
@@ -133,3 +133,25 @@ class DashboardOverviewTests(IncidentActionFixture):
         self.assertEqual(rows['database']['status'],'unknown')
         self.assertFalse(rows['portal-login']['collection_delayed'])
         self.assertEqual(rows['portal-login']['status'],'unknown')
+
+    def test_timeline_distinguishes_recovery_observation_from_incident_closure(self):
+        moment=now()
+        with self.factory.begin() as db:
+            for incident_id in ('verified-recovery','closed-only'):
+                db.add(Incident(id=incident_id,target_id=incident_id,
+                                rule_id='monitoring_target_down',status='closed',
+                                detected_at=moment-timedelta(minutes=5),
+                                closed_at=moment-timedelta(minutes=1)))
+            db.flush()
+            db.add(PrometheusAlertState(id='verified-state',target_key='verified-recovery',
+                                        rule_name='MonitoringTargetDown',labels={},state='normal',
+                                        normal_samples=2,incident_id='verified-recovery',
+                                        evaluated_at=moment-timedelta(minutes=2)))
+        self.login_cookie()
+        response=self.client.get('/api/dashboard/incident-overview')
+        self.assertEqual(response.status_code,200)
+        timeline={row['id']:row for row in response.json()['timeline']}
+        self.assertIsNone(timeline['closed-only']['recovery_checked_at'])
+        verified=timeline['verified-recovery']
+        self.assertIsNotNone(verified['recovery_checked_at'])
+        self.assertLess(verified['recovery_checked_at'],verified['closed_at'])

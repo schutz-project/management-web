@@ -191,3 +191,17 @@
 
 .service-tabs .service-tab-proxy[aria-selected=true]{background:#e6f7f5;border-color:#14a99a;color:#08766b}
 .service-tabs .service-tab-database[aria-selected=true]{background:#f1eaff;border-color:#9b72ee;color:#6637b1}
+
+.monitoring-paths,.incident-timeline,.collector-preview{margin-top:14px;padding-top:12px;border-top:1px solid #dbe6f4}
+.monitoring-paths h3,.incident-timeline h3,.collector-preview h3{font-size:1rem;margin:0 0 8px}
+.monitoring-path-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.monitoring-path-card,.incident-timeline-row{min-width:0;padding:8px;border:1px solid #dbe6f4;border-radius:8px}
+.monitoring-path-card h4,.monitoring-path-card p{margin:0 0 4px}
+.monitoring-path-card small{display:block;color:#4b6480}
+.incident-timeline-range,.collector-preview-heading{display:flex;justify-content:space-between;gap:6px;flex-wrap:wrap}
+.incident-timeline-range,.incident-timeline-row small{font-size:.75rem;color:#4b6480}
+.incident-timeline-row{margin:6px 0}
+.incident-timeline-row svg{display:block;width:100%;height:8px;margin:4px 0}
+.collector-preview-scroll{overflow-x:auto}
+.collector-preview .read-table{min-width:270px}
+@media(max-width:420px){.monitoring-path-grid{grid-template-columns:minmax(0,1fr)}}

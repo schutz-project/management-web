@@ -110,7 +110,7 @@ function renderDashboard(d,o,overview){
  $('.side-status').replaceChildren(E('div','시스템 상태'),E('p',!d?'미확인':known?'기능 점검 정상':'점검 확인 필요'),E('div','조회 시각'),E('p',date(d?.as_of||o?.as_of)));
  const targets=o?.targets?.status==='ok'?o.targets.items:null;const vals=[c?.new,c?c.accepted+c.in_progress:null,c?.closed,targets?targets.filter(t=>t.up).length+' / '+targets.length:null];const notes=['관리자 대응 대기','접수 · 조치 진행','전체 종료 이력','Prometheus 수집 대상'];
  $$('.kpi').forEach((e,i)=>{e.querySelector('strong').textContent=vals[i]===undefined||vals[i]===null?'미확인':String(vals[i])+(i<3?' 건':'');e.querySelector('div:nth-child(2)>small').textContent=notes[i];wire(e,()=>go(i===3?'collectors':'incidents',i===2?'closed':'open'))});$$('.kpi')[2].querySelector('h3').textContent='종료 사건 이력';$('.tiny-badge').textContent=open===null?'?':String(open);
- bell.classList.toggle('no-alerts',o?.alerts?.status==='ok'&&!o.alerts.items.length&&open===0);renderServiceHealth(servers);renderServices(o);renderResources(o);renderIncidentOverview(overview);$('.footer p:last-child').textContent=modeNote();
+ bell.classList.toggle('no-alerts',o?.alerts?.status==='ok'&&!o.alerts.items.length&&open===0);renderServiceHealth(servers);renderMonitoringPaths(servers);renderServices(o);renderResources(o);renderIncidentOverview(overview);renderIncidentTimeline(overview);renderCollectorPreview(o);$('.footer p:last-child').textContent=modeNote();
  $('#incidents .panel-head a').onclick=e=>{e.preventDefault();go('incidents')};$('#incidents .panel-head .link').textContent='분석 이력 →';$('#incidents .panel-head .link').onclick=()=>go('incidents','closed');
  wire($('.resources .panel-head .link'),()=>go('resources'));
 }
@@ -500,6 +500,82 @@ window.addEventListener('keydown',e=>{if(e.key==='Escape')closeAlerts()});window
 async function boot(){$('#auth-message').textContent='로그인 상태를 확인하고 있습니다…';$('#auth-retry').hidden=true;$('#login-form').hidden=true;
  try{try{const r=await fetch('/local/status',{cache:'no-store'});if(r.ok)state.mode={...await r.json(),local_mode:true}}catch{}if(state.mode.mode==='snapshot'){state.window='15m';$$('.periods button').forEach(b=>{b.disabled=b.dataset.window!=='15m'})}await restoreContext()}
  catch(e){app.hidden=true;$('#auth-screen').hidden=false;$('#auth-message').textContent='연결 확인 실패 · '+e.message;$('#auth-retry').hidden=false}}
+function renderMonitoringPaths(servers){
+ const root=$('.monitoring-paths');
+ root.replaceChildren(E('h3','모니터링 시스템 상태'));
+ const cards=E('div',undefined,'monitoring-path-grid');
+ const external=E('article',undefined,'monitoring-path-card');
+ external.append(E('h4','대시보드 접속'),E('p','외부 점검 지점 → 관리 웹'),
+  E('strong','외부 점검 미연결'),E('small','마지막 성공 미제공'));
+ const proxy=E('article',undefined,'monitoring-path-card');
+ const {row,kind}=serviceState(servers,'proxy');
+ proxy.append(E('h4','포털 점검 경로'),E('p','모니터링 서버 → 직원 포털'),
+  serviceStatusBadge(kind));
+ if(['normal','abnormal'].includes(kind)){
+  const detail=[];
+  if(Number.isInteger(row.http_status))detail.push('HTTP '+row.http_status);
+  if(Number.isFinite(row.duration_ms))detail.push(fmt(row.duration_ms)+' ms');
+  if(detail.length)proxy.append(E('p',detail.join(' · ')));
+ }
+ proxy.append(E('small','최근 점검 '+(row?.last_checked_at?date(row.last_checked_at)+' (KST)':'미확인')));
+ if(kind!=='normal')proxy.append(E('small','마지막 성공 시각 미제공'));
+ cards.append(external,proxy);root.append(cards);
+}
+
+function renderCollectorPreview(o){
+ const root=$('.collector-preview');
+ const heading=E('div',undefined,'collector-preview-heading');
+ heading.append(E('h3','수집 상태'),button('전체 보기 →',()=>go('collectors')));
+ root.replaceChildren(heading);
+ const scroll=E('div',undefined,'collector-preview-scroll');
+ const table=E('table',undefined,'read-table'),head=E('thead'),header=E('tr'),body=E('tbody');
+ for(const label of ['대상 (job)','역할','상태','최근 수집'])header.append(E('th',label));
+ head.append(header);
+ const add=(cells)=>{const row=E('tr');for(const value of cells)row.append(E('td',value));body.append(row)};
+ if(o?.targets?.status==='ok'){
+  for(const t of o.targets.items)add([t.job,t.job==='ec2-node'?'호스트 자원':targetLabel(t),
+   t.up===true?'수집 성공':t.up===false?'수집 실패':'미확인','미제공']);
+  if(!o.targets.items.length)add(['Prometheus','수집 대상','대상 없음','미제공']);
+ }else add(['Prometheus','수집 대상','조회 불가','미제공']);
+ const logs=o?.logs;
+ const logOK=logs?.['portal-api']?.status==='ok'&&logs?.['portal-nginx']?.status==='ok';
+ add(['Loki','로그 저장소',logOK?'조회 성공':'조회 미확인','미제공']);
+ table.append(head,body);scroll.append(table);root.append(scroll);
+}
+
+function renderIncidentTimeline(data){
+ const root=$('.incident-timeline');
+ root.replaceChildren(E('h3','장애 감지·복구 타임라인'));
+ if(!Array.isArray(data?.timeline)){
+  root.append(E('p','타임라인 조회 불가','read-muted'));return;
+ }
+ if(!data.timeline.length){
+  root.append(E('p','선택 기간에 해당하는 운영 사건 없음','read-muted'));return;
+ }
+ const start=Date.parse(data.start),end=Date.parse(data.end);
+ const percent=at=>Math.max(0,Math.min(100,(Date.parse(at)-start)/(end-start)*100));
+ const range=E('div',undefined,'incident-timeline-range');
+ range.append(E('span',date(data.start)),E('span',date(data.end)+' (KST)'));root.append(range);
+ for(const row of data.timeline){
+  const card=E('article',undefined,'incident-timeline-row');
+  const link=button(name(row.rule_id)+' · '+name(row.target_id),()=>openIncident(row.id));
+  const track=svg('svg',{viewBox:'0 0 100 8',preserveAspectRatio:'none','aria-hidden':'true'});
+  const detected=percent(row.detected_at);
+  track.append(svg('line',{x1:0,x2:100,y1:4,y2:4,stroke:'#dbe6f4','stroke-width':2}));
+  if(row.recovery_checked_at)track.append(svg('line',{x1:detected,x2:percent(row.recovery_checked_at),y1:4,y2:4,stroke:'#70ad9b','stroke-width':4}));
+  track.append(svg('line',{x1:detected,x2:detected,y1:0,y2:8,stroke:'#c64e66','stroke-width':1}));
+  if(row.recovery_checked_at){
+   const recovered=percent(row.recovery_checked_at);
+   track.append(svg('line',{x1:recovered,x2:recovered,y1:0,y2:8,stroke:'#28735e','stroke-width':1}));
+  }
+  card.append(link,track,E('small','감지 '+date(row.detected_at)+' · '+(row.recovery_checked_at
+   ?'복구 확인 '+date(row.recovery_checked_at):'복구 미확인')+' (KST)'));
+  root.append(card);
+ }
+ if(data.timeline_truncated)root.append(E('p','최근 20건 표시','read-muted'));
+ root.append(E('small','사건 종료 시각은 복구 확인 시각과 별도로 관리됩니다.','read-muted'));
+}
+
 function renderIncidentOverview(data){
  const trend=$('.incident-trend'),breakdown=$('.incident-breakdown');
  trend.replaceChildren();breakdown.replaceChildren();
