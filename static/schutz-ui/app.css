@@ -207,9 +207,18 @@
 @media(max-width:420px){.monitoring-path-grid{grid-template-columns:minmax(0,1fr)}}
 
 .phase3-table-scroll{overflow-x:auto}
-.phase3-route-table{min-width:42rem}
+.detail-card .phase3-route-table{min-width:34rem}
+.detail-card .phase3-route-table th:nth-child(n){width:auto}
+.detail-card .route-table-app th:first-child{width:28%}
+.detail-card .route-table-proxy{min-width:59rem}
+.detail-card .route-table-proxy th:first-child{width:23%}
+.detail-card .route-table-proxy th:nth-child(3){width:11%}
+.phase3-route-table td:nth-child(n+2),.phase3-route-table th:nth-child(n+2){border-left:1px solid #e5edf6}
+.route-metric{display:flex;align-items:center;gap:.625rem;min-height:1.875rem}
+.route-metric strong{flex:0 0 3.25rem;font-variant-numeric:tabular-nums}
+.route-metric strong:only-child{flex-basis:auto}
 .phase3-route-table td:first-child,.phase3-target-table td{overflow-wrap:anywhere}
-.phase3-route-table .route-plot{min-width:4rem}
+.phase3-route-table .route-plot{flex:0 1 7.5rem;min-width:4rem;height:1.875rem}
 .phase3-target-table{min-width:48rem}
 .phase3-collection-error{display:block;margin-top:.25rem}
 .phase3-log-toolbar,.phase3-log-toolbar label{display:flex;gap:.75rem;align-items:center;flex-wrap:wrap}

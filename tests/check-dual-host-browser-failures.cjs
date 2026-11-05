@@ -81,11 +81,20 @@ for(const width of [1440,390]){
  });
  test(width+'px: route, log and collection tables fit their panels',{timeout:20000},async()=>{
   await review(width,resources(),async p=>{
-   for(const [view,selector] of [['services&service=proxy','.phase3-route-table'],['logs','.phase3-log-grid'],['collectors','.phase3-target-table']]){
+   for(const [view,selector] of [['services&service=app','.route-table-app'],['services&service=proxy','.route-table-proxy'],['logs','.phase3-log-grid'],['collectors','.phase3-target-table']]){
     await p.goto(base+'/#view='+view);
     await p.locator(selector).waitFor();
     const bounds=await p.locator('.view-panel').evaluate(e=>[e.scrollWidth,e.clientWidth]);
     assert(bounds[0]<=bounds[1]+2,view+' panel horizontal overflow');
+    if(view.startsWith('services')){
+     const table=p.locator(selector);
+     const widths=await table.locator('thead th').evaluateAll(cells=>cells.map(cell=>cell.getBoundingClientRect().width));
+     assert(widths[0]<widths.reduce((total,value)=>total+value,0)*.35);
+     const metric=table.locator('.route-metric').filter({has:p.locator('.route-plot')}).first();
+     const value=await metric.locator('strong').boundingBox();
+     const trend=await metric.locator('.route-plot').boundingBox();
+     assert(value&&trend&&trend.x>=value.x+value.width&&Math.abs(value.y+value.height/2-trend.y-trend.height/2)<2);
+    }
    }
   });
  });
