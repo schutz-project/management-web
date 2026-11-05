@@ -67,6 +67,14 @@ const server=http.createServer((req,res)=>{
    }
    await monitoring.locator('.resource-detail-link').click();
    await page.locator('.resource-detail-header').waitFor();
+   const comparison=page.locator('.resource-compare');
+   assert.equal(await comparison.locator('.resource-compare-host').count(),2);
+   assert.equal(await comparison.locator('.resource-compare-metric').count(),6);
+   await comparison.getByRole('button',{name:'변화 확대'}).click();
+   const axes=await comparison.locator('.resource-axis-note').allTextContents();
+   assert.equal(axes.length,6);
+   assert.deepEqual(axes.slice(0,3),axes.slice(3));
+   assert(axes.every(label=>label.includes('미세 변화 확대')));
    assert.match(page.url(),/host=example-monitoring/);
    assert.match(await page.locator('.resource-detail-header').textContent(),/모니터링 서버/);
    await page.reload();await page.locator('.resource-detail-header').waitFor();
@@ -108,12 +116,17 @@ const server=http.createServer((req,res)=>{
    assert.equal(await page.locator('.heading h1').textContent(),'서비스 모니터링');
    const tabs=page.locator('.service-tabs button');
    assert.equal(await tabs.count(),3);
+   const checks=page.locator('.service-check-history');
+   assert.match(await checks.textContent(),/최근 FastAPI 점검 기록/);
    const first=await tabs.nth(0).boundingBox(),last=await tabs.nth(2).boundingBox();
    assert(first&&last&&Math.abs(first.y-last.y)<2,width+'px services must share one row');
    await tabs.nth(0).focus();await page.keyboard.press('ArrowRight');
    await page.waitForURL(/service=database/);
    assert.equal(await page.locator('#service-tab-database').evaluate(e=>e===document.activeElement),true);
+   assert.match(await checks.textContent(),/최근 PostgreSQL 점검 기록.*DB 점검 로그는 미수집/);
    await tabs.nth(2).click();await page.waitForURL(/service=proxy/);
+   assert.match(await checks.textContent(),/최근 Nginx 점검 기록.*HTTP 200/);
+   assert.doesNotMatch(await checks.textContent(),/FastAPI|PostgreSQL/);
    assert.match(await page.locator('.service-analysis-head').textContent(),/Nginx/);
    await page.goBack();await page.locator('#service-analysis-panel').waitFor();
    assert.match(await page.locator('.service-analysis-head').textContent(),/PostgreSQL/);
