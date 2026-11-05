@@ -110,7 +110,7 @@ function renderDashboard(d,o,overview){
  $('.side-status').replaceChildren(E('div','시스템 상태'),E('p',!d?'미확인':known?'기능 점검 정상':'점검 확인 필요'),E('div','조회 시각'),E('p',date(d?.as_of||o?.as_of)));
  const targets=o?.targets?.status==='ok'?o.targets.items:null;const vals=[c?.new,c?c.accepted+c.in_progress:null,c?.closed,targets?targets.filter(t=>t.up).length+' / '+targets.length:null];const notes=['관리자 대응 대기','접수 · 조치 진행','전체 종료 이력','Prometheus 수집 대상'];
  $$('.kpi').forEach((e,i)=>{e.querySelector('strong').textContent=vals[i]===undefined||vals[i]===null?'미확인':String(vals[i])+(i<3?' 건':'');e.querySelector('div:nth-child(2)>small').textContent=notes[i];wire(e,()=>go(i===3?'collectors':'incidents',i===2?'closed':'open'))});$$('.kpi')[2].querySelector('h3').textContent='종료 사건 이력';$('.tiny-badge').textContent=open===null?'?':String(open);
- bell.classList.toggle('no-alerts',o?.alerts?.status==='ok'&&!o.alerts.items.length&&open===0);renderServiceHealth(servers);renderServices(o);renderResources(o);renderIncidentOverview(overview);$('.footer p:last-child').textContent=modeNote();
+ bell.classList.toggle('no-alerts',o?.alerts?.status==='ok'&&!o.alerts.items.length&&open===0);renderServiceHealth(servers);renderMonitoringPaths(servers);renderServices(o);renderResources(o);renderIncidentOverview(overview);renderIncidentTimeline(overview);renderCollectorPreview(o);$('.footer p:last-child').textContent=modeNote();
  $('#incidents .panel-head a').onclick=e=>{e.preventDefault();go('incidents')};$('#incidents .panel-head .link').textContent='분석 이력 →';$('#incidents .panel-head .link').onclick=()=>go('incidents','closed');
  wire($('.resources .panel-head .link'),()=>go('resources'));
 }
@@ -157,7 +157,7 @@ function resourceControls(scope='summary'){const tools=E('div',undefined,'resour
 function resourceValues(points){return (points||[]).filter(p=>Number.isFinite(p[0])&&Number.isFinite(p[1])&&p[1]>=0&&p[1]<=100)}
 function resourceBounds(values,zoom){if(!zoom||!values.length)return [0,100];const lo=Math.min(...values.map(p=>p[1])),hi=Math.max(...values.map(p=>p[1])),pad=Math.max((hi-lo)*.2,.02);return [Math.max(0,lo-pad),Math.min(100,hi+pad)]}
 
-function resourceChart(holder,points,color,label,options={}){holder.replaceChildren();const data=points||[],values=resourceValues(data);if(!values.length){holder.append(E('p','그래프 데이터 없음','read-muted'));return}const compact=options.compact===true,zoom=options.zoom??(state.graphScale==='zoom'),[min,max]=resourceBounds(values,zoom),w=compact?300:900,h=compact?100:300,l=compact?47:65,r=12,t=15,b=compact?22:32,start=data[0][0],end=data.at(-1)[0],X=x=>l+(x-start)/(end-start||1)*(w-l-r),Y=y=>t+(max-y)/(max-min)*(h-t-b);holder.append(E('p',zoom?'미세 변화 확대 · 축 '+fmt(min,3)+'~'+fmt(max,3)+'%':'전체 축 0~100%','resource-axis-note'));const s=svg('svg',{viewBox:`0 0 ${w} ${h}`,width:'100%',height:String(h),role:'img','aria-label':label+' 사용률 '+fmt(min,3)+'~'+fmt(max,3)+'% · 실제 조회 표본'});for(const v of [min,(min+max)/2,max]){s.append(svg('line',{x1:l,x2:w-r,y1:Y(v),y2:Y(v),stroke:'#dce7f3','stroke-dasharray':'3 3'}),svg('text',{x:l-7,y:Y(v)+4,'text-anchor':'end','font-size':11,fill:'#637d9c'},fmt(v,3)+'%'))}for(const v of [start,end])s.append(svg('text',{x:X(v),y:h-6,'text-anchor':v===start?'start':'end','font-size':11,fill:'#637d9c'},clock(v)));
+function resourceChart(holder,points,color,label,options={}){holder.replaceChildren();const data=points||[],values=resourceValues(data);if(!values.length){holder.append(E('p','그래프 데이터 없음','read-muted'));return}const compact=options.compact===true,zoom=options.zoom??(state.graphScale==='zoom'),[min,max]=options.bounds||resourceBounds(values,zoom),w=compact?300:900,h=compact?100:300,l=compact?47:65,r=12,t=15,b=compact?22:32,start=options.range?.[0]??data[0][0],end=options.range?.[1]??data.at(-1)[0],X=x=>l+(x-start)/(end-start||1)*(w-l-r),Y=y=>t+(max-y)/(max-min)*(h-t-b);holder.append(E('p',zoom?'미세 변화 확대 · 축 '+fmt(min,3)+'~'+fmt(max,3)+'%':'전체 축 0~100%','resource-axis-note'));const s=svg('svg',{viewBox:`0 0 ${w} ${h}`,width:'100%',height:String(h),role:'img','aria-label':label+' 사용률 '+fmt(min,3)+'~'+fmt(max,3)+'% · 실제 조회 표본'});for(const v of [min,(min+max)/2,max]){s.append(svg('line',{x1:l,x2:w-r,y1:Y(v),y2:Y(v),stroke:'#dce7f3','stroke-dasharray':'3 3'}),svg('text',{x:l-7,y:Y(v)+4,'text-anchor':'end','font-size':11,fill:'#637d9c'},fmt(v,3)+'%'))}for(const v of [start,end])s.append(svg('text',{x:X(v),y:h-6,'text-anchor':v===start?'start':'end','font-size':11,fill:'#637d9c'},clock(v)));
  let segment=[],prev=null;const draw=()=>{if(segment.length){const coordinates=segment.map(p=>X(p[0])+','+Y(p[1])).join(' ');s.append(svg('polygon',{points:X(segment[0][0])+','+Y(min)+' '+coordinates+' '+X(segment.at(-1)[0])+','+Y(min),fill:color,'fill-opacity':'.11'}),svg('polyline',{points:coordinates,fill:'none',stroke:color,'stroke-width':3,'stroke-linecap':'round','stroke-linejoin':'round'}))}segment=[]};for(const p of data){const valid=Number.isFinite(p[1])&&p[1]>=0&&p[1]<=100;if(!valid||(prev!==null&&p[0]-prev>(state.data?.step_seconds||30)*1500))draw();if(valid)segment.push(p);prev=p[0]}draw();const last=values.at(-1);s.append(svg('circle',{cx:X(last[0]),cy:Y(last[1]),r:4,fill:color,stroke:'#fff','stroke-width':2}));if(compact){holder.append(s);return}const cross=svg('line',{x1:X(last[0]),x2:X(last[0]),y1:t,y2:h-b,stroke:color,'stroke-dasharray':'3 3',opacity:'.5'}),dot=svg('circle',{cx:X(last[0]),cy:Y(last[1]),r:4,fill:color});s.append(cross,dot);const readout=E('output',undefined,'resource-readout');readout.setAttribute('aria-live','off');const slider=E('input',undefined,'resource-scrubber');slider.type='range';slider.min=0;slider.max=values.length-1;slider.step=1;slider.value=values.length-1;slider.setAttribute('aria-label',label+' 시각별 수치 확인');const select=i=>{const p=values[Math.max(0,Math.min(values.length-1,i))];readout.textContent=date(p[0])+' (KST) · '+fmt(p[1],3)+'%';slider.setAttribute('aria-valuetext',readout.textContent);cross.setAttribute('x1',X(p[0]));cross.setAttribute('x2',X(p[0]));dot.setAttribute('cx',X(p[0]));dot.setAttribute('cy',Y(p[1]))};slider.oninput=()=>select(Number(slider.value));s.onpointermove=e=>{const rect=s.getBoundingClientRect(),time=start+Math.max(0,Math.min(1,(e.clientX-rect.left-l*rect.width/w)/((w-l-r)*rect.width/w)))*(end-start);let index=0;values.forEach((p,i)=>{if(Math.abs(p[0]-time)<Math.abs(values[index][0]-time))index=i});slider.value=index;select(index)};select(values.length-1);holder.append(s,readout,slider);const span=Math.max(...values.map(p=>p[1]))-Math.min(...values.map(p=>p[1]));holder.append(E('p',values.length<2?'유효 표본 1개 · 변화 판단 불가':span<.1?'선택 기간 내 변화가 거의 없습니다.':'표시 표본 변동 폭 '+fmt(span,3)+'%p','resource-change'));if(zoom)holder.append(E('p','확대 보기는 사용량이 높은 상태를 뜻하지 않습니다.','resource-axis-note'))}
 const resourceKeys=['cpu','memory','disk'],resourceNames=['CPU','메모리','루트 디스크 (/)'],resourceColors=['#1879ee','#8a51ff','#00a6ad'];
 function metricCollection(host,h){if(!host)return '서버 자원 미확인';if(host.status==='stale')return '수집 지연';if(host.status!=='ok')return host.status==='unavailable'?'조회 실패':'데이터 없음';if(h&&h.status!=='ok')return name(h.status);return state.window==='custom'?'선택 시점 메트릭 확인':'메트릭 수집 정상'}
@@ -358,12 +358,110 @@ async function mutate(id,kind,payload){
 
 function pageTitle(title,o){page.append(E('h2',title),E('p',date(o.range_start)+' ~ '+date(o.as_of)+' (KST) · '+o.step_seconds+'초 간격'))}
 function metricSummary(label,metric,unit){const card=E('article',undefined,'read-stat');card.append(E('p',label),E('strong',metric?.status==='ok'?fmt(metric.value)+' '+unit:name(metric?.status||'unknown')));return card}
-function showServices(o){const key=state.service,def=serviceDefinitions[key],metric=serviceMetric(o,key),servers=state.dashboard?.servers||[];pageTitle('서비스 상세 · '+def.name,o);page.append(button('← 서비스 상태로 돌아가기',()=>go('dashboard')));const switchService=(k,focus=false)=>{if(state.busy)return;state.service=k;remember();page.replaceChildren();showServices(o);if(focus)page.querySelector('#service-tab-'+k)?.focus?.()};const layout=E('div',undefined,'service-analysis-layout'),tabs=E('div',undefined,'service-tabs');tabs.setAttribute('role','tablist');tabs.setAttribute('aria-label','서비스 선택');tabs.setAttribute('aria-orientation','horizontal');['app','database','proxy'].forEach((k,i)=>{const b=button('',()=>switchService(k));b.append(uiIcon(k),E('span',serviceDefinitions[k].name));b.setAttribute('role','tab');b.setAttribute('aria-selected',String(k===key));b.setAttribute('aria-controls','service-analysis-panel');b.setAttribute('id','service-tab-'+k);b.tabIndex=k===key?0:-1;b.onkeydown=e=>{if(['ArrowRight','ArrowLeft','ArrowDown','ArrowUp','Home','End'].includes(e.key)){e.preventDefault();const next=e.key==='Home'?0:e.key==='End'?2:(i+(['ArrowRight','ArrowDown'].includes(e.key)?1:2))%3;switchService(['app','database','proxy'][next],true)}};tabs.append(b)});const panel=E('section',undefined,'service-analysis-panel');panel.setAttribute('id','service-analysis-panel');panel.setAttribute('role','tabpanel');panel.setAttribute('aria-labelledby','service-tab-'+key);const head=E('div',undefined,'service-analysis-head');head.append(uiIcon(key),E('h3',def.name+' · '+def.target),serviceBadge(servers,key));panel.append(head,E('p',def.label+' (ms)','svc-label'),E('strong',metric?.status==='no_data'?'미수집':metricText(metric,'ms'),'service-main-value'));const health=serviceState(servers,key);panel.append(E('p','현재 기능 점검: '+health.label+' · 최근 점검 '+date(health.row?.last_checked_at)+' (KST)','read-muted'));if(o.historical)panel.append(E('p','과거 지표는 선택 종료 시점의 값이며 기능 점검 배지는 현재 상태입니다.','read-note'));const modes=E('div',undefined,'service-modes');for(const [mode,label]of [['full','전체 범위'],['zoom','변화 확대']]){const b=button(label,()=>{state.serviceScales[key]=mode;page.replaceChildren();showServices(o)});b.setAttribute('aria-pressed',String(state.serviceScales[key]===mode));modes.append(b)}panel.append(modes);const plot=E('div',undefined,'service-detail-chart');servicePlot(plot,metric?.points,def.color,def.label,false,state.serviceScales[key]==='zoom');panel.append(plot);const stats=serviceStats(metric?.points),summaries=E('div',undefined,'service-statistics');const current=metric?.status==='ok'&&Number.isFinite(metric.value)?metric.value:null;for(const [kind,label,value]of [['current',o.historical?'종료 시점':'현재값',current],['mean','표본 평균',stats.mean],['max','최대',stats.max],['min','최소',stats.min],['spread','표준 편차',stats.std]]){const item=E('div'),icon=E('span',undefined,'service-stat-icon service-stat-'+kind);icon.append(uiIcon(kind));const text=E('div');text.append(E('span',label),E('strong',Number.isFinite(value)?fmt(value,3)+' ms':'데이터 없음'));if(kind==='current'&&current!==null){const latest=metricPoints(metric?.points).at(-1);if(latest){const timestamp=E('small','('+new Date(latest[0]).toLocaleTimeString('ko-KR',{timeZone:'Asia/Seoul',hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'})+')','service-stat-time');timestamp.setAttribute('title','현재값에 대응하는 마지막 유효 표본 시각 (KST)');text.append(timestamp)}}item.append(icon,text);summaries.append(item)}panel.append(summaries,serviceAuxiliary(o,key),E('p','유효 표본 '+stats.count+'개 · 평균·최대·최소·표준 편차는 구간별 p95 표시 표본의 통계이며 전체 요청의 통계가 아닙니다.','read-muted'));if(metric?.status!=='ok')panel.append(E('p','지표 상태: '+name(metric?.status||'no_data')+' · 조회 가능한 과거 추이와 구분합니다.','read-note'));layout.append(tabs,panel);page.append(layout);if(key==='app')page.append(E('p','HTTP 요청량·5xx 서버 오류는 앱 계측값입니다.','read-muted'));if(key==='database')page.append(E('p','앱 DB 작업시간은 애플리케이션 내부 계측값입니다. PostgreSQL 전체 부하나 세션 수를 뜻하지 않습니다. DB 연결 수·활성 세션은 미수집입니다.','read-muted'));if(key==='proxy')page.append(E('p','핵심 수치는 /health 경로 기준입니다. 아래 경로별 지표는 별도로 구분합니다.','read-muted'));
+function showServices(o){const key=state.service,def=serviceDefinitions[key],metric=serviceMetric(o,key),servers=state.dashboard?.servers||[];pageTitle('서비스 모니터링 상세 · '+def.name,o);page.append(button('← 서비스 상태로 돌아가기',()=>go('dashboard')));const switchService=(k,focus=false)=>{if(state.busy)return;state.service=k;remember();page.replaceChildren();showServices(o);if(focus)page.querySelector('#service-tab-'+k)?.focus?.()};const layout=E('div',undefined,'service-analysis-layout'),tabs=E('div',undefined,'service-tabs');tabs.setAttribute('role','tablist');tabs.setAttribute('aria-label','서비스 선택');tabs.setAttribute('aria-orientation','horizontal');['app','database','proxy'].forEach((k,i)=>{const b=button('',()=>switchService(k));b.append(uiIcon(k),E('span',serviceDefinitions[k].name),serviceBadge(servers,k));
+ const check=serviceState(servers,k);
+ b.append(E('small','최근 점검 '+(check.row?.last_checked_at?date(check.row.last_checked_at)+' (KST)':'미확인'),'service-tab-time'));
+ if(k===key){const selected=E('small','선택됨','service-tab-selected');selected.setAttribute('aria-hidden','true');b.append(selected)}
+ b.setAttribute('aria-label',serviceDefinitions[k].name);b.classList.add('service-tab-card','service-tab-'+k);b.setAttribute('role','tab');b.setAttribute('aria-selected',String(k===key));b.setAttribute('aria-controls','service-analysis-panel');b.setAttribute('id','service-tab-'+k);b.tabIndex=k===key?0:-1;b.onkeydown=e=>{if(['ArrowRight','ArrowLeft','ArrowDown','ArrowUp','Home','End'].includes(e.key)){e.preventDefault();const next=e.key==='Home'?0:e.key==='End'?2:(i+(['ArrowRight','ArrowDown'].includes(e.key)?1:2))%3;switchService(['app','database','proxy'][next],true)}};tabs.append(b)});const panel=E('section',undefined,'service-analysis-panel');panel.setAttribute('id','service-analysis-panel');panel.setAttribute('role','tabpanel');panel.setAttribute('aria-labelledby','service-tab-'+key);const head=E('div',undefined,'service-analysis-head');head.append(uiIcon(key),E('h3',def.name+' · '+def.target),serviceBadge(servers,key));panel.append(head,E('p',def.label+' (ms)','svc-label'),E('strong',metric?.status==='no_data'?'미수집':metricText(metric,'ms'),'service-main-value'));const health=serviceState(servers,key);panel.append(E('p','현재 기능 점검: '+health.label+' · 최근 점검 '+date(health.row?.last_checked_at)+' (KST)','read-muted'));if(o.historical)panel.append(E('p','과거 지표는 선택 종료 시점의 값이며 기능 점검 배지는 현재 상태입니다.','read-note'));const modes=E('div',undefined,'service-modes');for(const [mode,label]of [['full','전체 범위'],['zoom','변화 확대']]){const b=button(label,()=>{state.serviceScales[key]=mode;page.replaceChildren();showServices(o)});b.setAttribute('aria-pressed',String(state.serviceScales[key]===mode));modes.append(b)}panel.append(modes);const plot=E('div',undefined,'service-detail-chart');servicePlot(plot,metric?.points,def.color,def.label,false,state.serviceScales[key]==='zoom');const stats=serviceStats(metric?.points),summaries=E('div',undefined,'service-statistics');const current=metric?.status==='ok'&&Number.isFinite(metric.value)?metric.value:null;for(const [kind,label,value]of [['current',o.historical?'종료 시점':'현재값',current],['mean','표본 평균',stats.mean],['max','최대',stats.max],['min','최소',stats.min],['spread','표준 편차',stats.std]]){const item=E('div'),icon=E('span',undefined,'service-stat-icon service-stat-'+kind);icon.append(uiIcon(kind));const text=E('div');text.append(E('span',label),E('strong',Number.isFinite(value)?fmt(value,3)+' ms':'데이터 없음'));if(kind==='current'&&current!==null){const latest=metricPoints(metric?.points).at(-1);if(latest){const timestamp=E('small','('+new Date(latest[0]).toLocaleTimeString('ko-KR',{timeZone:'Asia/Seoul',hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'})+')','service-stat-time');timestamp.setAttribute('title','현재값에 대응하는 마지막 유효 표본 시각 (KST)');text.append(timestamp)}}item.append(icon,text);summaries.append(item)}const chartRow=E('div',undefined,'service-detail-chart-row');
+ const chartPanel=E('section',undefined,'service-detail-box'),summaryPanel=E('section',undefined,'service-detail-box');
+ chartPanel.append(E('h3',def.label+' 추이'),plot);
+ summaryPanel.append(E('h3','응답시간 요약'),summaries);
+ chartRow.append(chartPanel,summaryPanel);
+ const evidenceRow=E('div',undefined,'service-detail-evidence-row'),metricsPanel=E('section',undefined,'service-detail-box');
+ metricsPanel.append(E('h3','주요 지표'),serviceAuxiliary(o,key));
+ evidenceRow.append(metricsPanel,serviceCheckHistory(o,key,health));
+ panel.append(chartRow,evidenceRow,E('p','유효 표본 '+stats.count+'개 · 평균·최대·최소·표준 편차는 구간별 p95 표시 표본의 통계이며 전체 요청의 통계가 아닙니다.','read-muted'));if(metric?.status!=='ok')panel.append(E('p','지표 상태: '+name(metric?.status||'no_data')+' · 조회 가능한 과거 추이와 구분합니다.','read-note'));layout.append(tabs,panel);page.append(layout);if(key==='app')page.append(E('p','HTTP 요청량·5xx 서버 오류는 앱 계측값입니다.','read-muted'));if(key==='database')page.append(E('p','앱 DB 작업시간은 애플리케이션 내부 계측값입니다. PostgreSQL 전체 부하나 세션 수를 뜻하지 않습니다. DB 연결 수·활성 세션은 미수집입니다.','read-muted'));if(key==='proxy')page.append(E('p','핵심 수치는 /health 경로 기준입니다. 아래 경로별 지표는 별도로 구분합니다.','read-muted'));
  const selected=state.service==='app'?['app_routes','app_p95_routes']:state.service==='database'?[]:['proxy_requests','proxy_errors','proxy_p95','upstream_p95'];
  const descriptions={app_routes:['경로별 요청량','건/초',1],app_p95_routes:['경로별 응답시간 p95','ms',1],proxy_requests:['경로별 요청량','건/초',1],proxy_errors:['경로별 5xx','건/초',1],proxy_p95:['전체 응답시간 p95','ms',1000],upstream_p95:['업스트림 응답시간 p95','ms',1000]};
  for(const key of selected){const[label,unit,mult]=descriptions[key],data=o.details?.[key],box=E('article',undefined,'detail-card');box.append(E('h3',label));if(data?.status!=='ok')box.append(E('p',name(data?.status||'unknown')));else if(!data.items.length)box.append(E('p','일치 시계열 없음 · 오류율 0으로 단정하지 않습니다.','read-muted'));else{const table=E('table',undefined,'read-table'),head=E('thead'),hr=E('tr');hr.append(E('th','요청 경로'),E('th',unit),E('th','추이'));head.append(hr);table.append(head);const body=E('tbody');for(const row of data.items){const tr=E('tr'),graph=E('td');tr.append(E('td',row.route),E('td',row.value===null?'미확인':fmt(row.value*mult)));const plot=E('div',undefined,'route-plot');chart(plot,row.points.map(p=>[p[0],p[1]===null?null:p[1]*mult]),'#087df3');graph.append(plot);tr.append(graph);body.append(tr)}table.append(body);box.append(table)}page.append(box)}
 }
-function showResources(o){pageTitle('서버 리소스 상세',o);const hosts=o.resources?.items||[];if(!hosts.length){page.append(E('p',o.resources?.status==='unavailable'?'서버 자원 조회 실패':'서버 자원 데이터 없음','read-note'));return}const host=hosts.find(h=>(h.host_id||h.instance)===state.resourceHost)||hosts[0];state.resourceHost=host.host_id||host.instance;if(state.window==='custom')page.append(E('p','사용자 지정 기간의 과거 지표입니다. 현재값 대신 선택 종료 시점의 값을 표시합니다.','read-note'));const top=E('div',undefined,'resource-detail-header');top.append(E('h3',hostTitle(host)),collectionBadge(host));if(hosts.length>1){const select=E('select');select.setAttribute('aria-label','메트릭 수집 대상');for(const h of hosts){const option=E('option',hostTitle(h));option.value=h.host_id||h.instance;select.append(option)}select.value=host.host_id||host.instance;select.onchange=()=>{state.resourceHost=select.value;remember();page.replaceChildren();showResources(o)};top.append(select)}page.append(top);const layout=E('div',undefined,'resource-analysis-layout'),tabs=E('div',undefined,'resource-tabs');tabs.setAttribute('role','tablist');tabs.setAttribute('aria-label','자원 선택');tabs.setAttribute('aria-orientation','vertical');resourceKeys.forEach((key,i)=>{const b=button('',()=>{state.resourceKey=key;remember();page.replaceChildren();showResources(o)}),icon=E('img');icon.src='/static/schutz-ui/assets/'+['cpu.png','memory.png','disk.png'][i];icon.alt='';b.append(icon,E('span',resourceNames[i]));b.setAttribute('role','tab');b.setAttribute('id','resource-tab-'+key);b.setAttribute('aria-controls','resource-analysis-panel');b.setAttribute('aria-selected',String(state.resourceKey===key));b.tabIndex=state.resourceKey===key?0:-1;b.onkeydown=e=>{if(['ArrowDown','ArrowUp','ArrowRight','ArrowLeft','Home','End'].includes(e.key)){e.preventDefault();const next=e.key==='Home'?0:e.key==='End'?2:(i+(['ArrowDown','ArrowRight'].includes(e.key)?1:2))%3;state.resourceKey=resourceKeys[next];remember();page.replaceChildren();showResources(o);page.querySelector('#resource-tab-'+state.resourceKey)?.focus?.()}};tabs.append(b)});const key=state.resourceKey,index=resourceKeys.indexOf(key),h=host.history?.[key],stats=sampleSummary(h?.points),current=host.status==='ok'&&Number.isFinite(host[key])?host[key]:null,panel=E('section',undefined,'resource-analysis-panel');panel.id='resource-analysis-panel';panel.setAttribute('role','tabpanel');panel.setAttribute('aria-labelledby','resource-tab-'+key);const heading=E('div',undefined,'resource-analysis-heading');heading.append(E('h3',resourceNames[index]+' 사용률'),collectionBadge(host,h),resourceControls('detail'));panel.append(heading,E('strong',current===null?(state.window==='custom'?'종료 시점 값 미확인':'현재값 미확인'):fmt(current)+' %','resource-analysis-current'));if(host.status!=='ok'||h?.status!=='ok')panel.append(E('p','현재 수집 상태: '+metricCollection(host,h)+' · 조회 가능한 과거 표본만 표시합니다.','read-note'));const plot=E('div',undefined,'resource-detail-plot');resourceChart(plot,h?.points,resourceColors[index],resourceNames[index],{zoom:state.resourceScales[key]==='zoom'});panel.append(plot);const summaries=E('div',undefined,'resource-analysis-stats');for(const [label,value,unit]of [[state.window==='custom'?'종료 시점':'현재값',current,'%'],['평균값',stats.mean,'%'],['최대값',stats.max,'%'],['최소값',stats.min,'%'],['표본 변동 폭',stats.span,'%p']]){const item=E('div'),icon=E('span',undefined,'resource-stat-icon stat-icon-'+summaries.children.length);icon.setAttribute('aria-hidden','true');icon.append(uiIcon(['resourceCurrent','resourceMean','resourceMax','min','resourceSpread'][summaries.children.length]));const content=E('div');content.append(E('span',label),E('strong',value===null?'미확인':fmt(value,3)+unit));item.append(icon,content);summaries.append(item)}const latest=resourceValues(h?.points).at(-1);panel.append(summaries,E('p','마지막 유효 표본 '+(latest?date(latest[0])+' (KST)':'미확인')+' · 그래프 평가 간격 '+(o.step_seconds||'미제공')+'초','read-muted'),E('p','평균·최대·최소는 선택 기간의 표시 표본 기준입니다. 수집 상태는 서버 전체의 정상 여부를 뜻하지 않습니다.','resource-axis-note'));layout.append(tabs,panel);page.append(layout)}
+function serviceCheckHistory(o,key,health){
+ const section=E('section',undefined,'service-check-history service-detail-box');
+ section.append(E('h3','최근 '+serviceDefinitions[key].name+' 점검 기록'));
+ if(health.row?.last_checked_at){
+  const code=key==='proxy'&&Number.isInteger(health.row.http_status)?' · HTTP '+health.row.http_status:'';
+  section.append(E('p',date(health.row.last_checked_at)+' (KST) · '+health.label+code,'read-muted'));
+ }
+ const logSource=key==='app'?o.logs?.['portal-api']:key==='proxy'?o.logs?.['portal-nginx']:null;
+ if(key==='database'){
+  section.append(E('p','DB 기능 점검 결과를 표시합니다. 별도 DB 점검 로그는 미수집입니다.','read-muted'));
+ }else if(logSource?.status!=='ok'){
+  section.append(E('p','최근 로그 조회 불가','read-muted'));
+ }else{
+  const rows=logSource.items.filter(({fields})=>key==='app'
+   ?fields.event_type==='health_check_completed'&&fields.route==='/health'
+   :fields.route==='/proxy-health'||fields.route==='/health').slice(0,5);
+  if(!rows.length)section.append(E('p','최근 5분에 일치하는 점검 로그 없음','read-muted'));
+  else{
+   const list=E('ul');
+   for(const row of rows){
+    const status=row.fields.status_code??row.fields.status;
+    const detail=key==='proxy'&&status?'HTTP '+status:'기능 점검 이벤트';
+    list.append(E('li',date(row.collected_at)+' (KST) · '+row.fields.route+' · '+detail));
+   }
+   section.append(list);
+  }
+ }
+ return section;
+}
+
+function resourceComparison(o,hosts){
+ const section=E('section',undefined,'resource-compare');
+ const heading=E('div',undefined,'resource-compare-heading');
+ heading.append(E('h3','두 서버 자원 비교'));
+ const controls=E('div',undefined,'resource-compare-controls');
+ controls.setAttribute('role','group');controls.setAttribute('aria-label','두 서버 비교 그래프 축');
+ for(const [mode,label]of [['full','전체 0~100%'],['zoom','변화 확대']]){
+  const control=button(label,()=>{
+   state.graphScale=mode;
+   section.replaceWith(resourceComparison(o,hosts));
+   page.querySelector('.resource-compare-controls [aria-pressed="true"]')?.focus();
+  });
+  control.setAttribute('aria-pressed',String(state.graphScale===mode));controls.append(control);
+ }
+ heading.append(controls);section.append(heading);
+ section.append(E('p',state.graphScale==='zoom'?'변화 확대 · 자원별 두 서버에 같은 축 범위를 적용합니다.':'같은 기간과 0~100% 축으로 비교합니다.','read-muted'));
+ const grid=E('div',undefined,'resource-compare-grid');
+ const roles=['service','monitoring'];
+ const byRole=roles.map(role=>hosts.filter(h=>h.server_role===role));
+ const sharedAxes=resourceKeys.map(key=>{
+  const points=byRole.filter(matches=>matches.length===1)
+   .flatMap(([host])=>host.history?.[key]?.points||[]);
+  const times=points.map(([at])=>at).filter(Number.isFinite);
+  return {
+   bounds:resourceBounds(resourceValues(points),state.graphScale==='zoom'),
+   range:times.length?[Math.min(...times),Math.max(...times)]:null,
+  };
+ });
+ for(const [index,role]of roles.entries()){
+  const matches=byRole[index],host=matches.length===1?matches[0]:null;
+  const column=E('article',undefined,'resource-compare-host');
+  column.append(E('h4',role==='service'?'서비스 서버':'모니터링 서버'));
+  if(!host){
+   column.append(E('p',matches.length?'역할이 중복되어 비교할 수 없습니다.':'이 역할의 수집 대상 미확인','read-note'));
+  }else{
+   column.append(collectionBadge(host),E('p','마지막 유효 표본 '+(host.last_collected_at?date(host.last_collected_at)+' (KST)':'미확인'),'read-muted'));
+   resourceKeys.forEach((key,index)=>{
+    const series=host.history?.[key],stats=sampleSummary(series?.points);
+    const current=host.status==='ok'&&series?.status==='ok'&&Number.isFinite(host[key])?host[key]:null;
+    const card=E('section',undefined,'resource-compare-metric');
+    card.append(E('h5',resourceNames[index]+' 사용률'),collectionBadge(host,series));
+    const values=E('dl',undefined,'resource-compare-values');
+    for(const [label,value]of [[o.historical?'종료 시점':'현재',current],['평균',stats.mean],['최대',stats.max]]){
+     const item=E('div');item.append(E('dt',label),E('dd',Number.isFinite(value)?fmt(value,3)+' %':'미확인'));values.append(item);
+    }
+    const plot=E('div');
+    resourceChart(plot,series?.points,resourceColors[index],resourceNames[index],
+     {compact:true,zoom:state.graphScale==='zoom',...sharedAxes[index]});
+    card.append(values,plot);column.append(card);
+   });
+  }
+  grid.append(column);
+ }
+ section.append(grid,E('p','수집 상태는 서버 전체의 정상 여부를 뜻하지 않습니다.','read-muted'));
+ return section;
+}
+function showResources(o){pageTitle('서버 리소스 상세',o);const hosts=o.resources?.items||[];page.append(resourceComparison(o,hosts));if(!hosts.length){page.append(E('p',o.resources?.status==='unavailable'?'서버 자원 조회 실패':'서버 자원 데이터 없음','read-note'));return}const host=hosts.find(h=>(h.host_id||h.instance)===state.resourceHost)||hosts[0];state.resourceHost=host.host_id||host.instance;if(state.window==='custom')page.append(E('p','사용자 지정 기간의 과거 지표입니다. 현재값 대신 선택 종료 시점의 값을 표시합니다.','read-note'));const top=E('div',undefined,'resource-detail-header');top.append(E('h3',hostTitle(host)),collectionBadge(host));if(hosts.length>1){const select=E('select');select.setAttribute('aria-label','메트릭 수집 대상');for(const h of hosts){const option=E('option',hostTitle(h));option.value=h.host_id||h.instance;select.append(option)}select.value=host.host_id||host.instance;select.onchange=()=>{state.resourceHost=select.value;remember();page.replaceChildren();showResources(o)};top.append(select)}page.append(top);const layout=E('div',undefined,'resource-analysis-layout'),tabs=E('div',undefined,'resource-tabs');tabs.setAttribute('role','tablist');tabs.setAttribute('aria-label','자원 선택');tabs.setAttribute('aria-orientation','vertical');resourceKeys.forEach((key,i)=>{const b=button('',()=>{state.resourceKey=key;remember();page.replaceChildren();showResources(o)}),icon=E('img');icon.src='/static/schutz-ui/assets/'+['cpu.png','memory.png','disk.png'][i];icon.alt='';b.append(icon,E('span',resourceNames[i]));b.setAttribute('role','tab');b.setAttribute('id','resource-tab-'+key);b.setAttribute('aria-controls','resource-analysis-panel');b.setAttribute('aria-selected',String(state.resourceKey===key));b.tabIndex=state.resourceKey===key?0:-1;b.onkeydown=e=>{if(['ArrowDown','ArrowUp','ArrowRight','ArrowLeft','Home','End'].includes(e.key)){e.preventDefault();const next=e.key==='Home'?0:e.key==='End'?2:(i+(['ArrowDown','ArrowRight'].includes(e.key)?1:2))%3;state.resourceKey=resourceKeys[next];remember();page.replaceChildren();showResources(o);page.querySelector('#resource-tab-'+state.resourceKey)?.focus?.()}};tabs.append(b)});const key=state.resourceKey,index=resourceKeys.indexOf(key),h=host.history?.[key],stats=sampleSummary(h?.points),current=host.status==='ok'&&Number.isFinite(host[key])?host[key]:null,panel=E('section',undefined,'resource-analysis-panel');panel.id='resource-analysis-panel';panel.setAttribute('role','tabpanel');panel.setAttribute('aria-labelledby','resource-tab-'+key);const heading=E('div',undefined,'resource-analysis-heading');heading.append(E('h3',resourceNames[index]+' 사용률'),collectionBadge(host,h),resourceControls('detail'));panel.append(heading,E('strong',current===null?(state.window==='custom'?'종료 시점 값 미확인':'현재값 미확인'):fmt(current)+' %','resource-analysis-current'));if(host.status!=='ok'||h?.status!=='ok')panel.append(E('p','현재 수집 상태: '+metricCollection(host,h)+' · 조회 가능한 과거 표본만 표시합니다.','read-note'));const plot=E('div',undefined,'resource-detail-plot');resourceChart(plot,h?.points,resourceColors[index],resourceNames[index],{zoom:state.resourceScales[key]==='zoom'});panel.append(plot);const summaries=E('div',undefined,'resource-analysis-stats');for(const [label,value,unit]of [[state.window==='custom'?'종료 시점':'현재값',current,'%'],['평균값',stats.mean,'%'],['최대값',stats.max,'%'],['최소값',stats.min,'%'],['표본 변동 폭',stats.span,'%p']]){const item=E('div'),icon=E('span',undefined,'resource-stat-icon stat-icon-'+summaries.children.length);icon.setAttribute('aria-hidden','true');icon.append(uiIcon(['resourceCurrent','resourceMean','resourceMax','min','resourceSpread'][summaries.children.length]));const content=E('div');content.append(E('span',label),E('strong',value===null?'미확인':fmt(value,3)+unit));item.append(icon,content);summaries.append(item)}const latest=resourceValues(h?.points).at(-1);panel.append(summaries,E('p','마지막 유효 표본 '+(latest?date(latest[0])+' (KST)':'미확인')+' · 그래프 평가 간격 '+(o.step_seconds||'미제공')+'초','read-muted'),E('p','평균·최대·최소는 선택 기간의 표시 표본 기준입니다. 수집 상태는 서버 전체의 정상 여부를 뜻하지 않습니다.','resource-axis-note'));layout.append(tabs,panel);page.append(layout)}
 function targetLabel(t){if(t.job==='portal-health')return t.instance.includes('proxy-health')?'프록시 생존 점검':'앱 생존 점검';return {'ec2-node':'서비스 서버 자원','portal-otel':'앱 서비스 지표',prometheus:'메트릭 저장소','portal-db-health':'직원 조회 점검'}[t.job]||t.job}
 function summaryCard(label,value){const card=E('article',undefined,'read-stat');card.append(E('p',label),E('strong',String(value)));return card}
 function collectorContent(o){
@@ -402,6 +500,82 @@ window.addEventListener('keydown',e=>{if(e.key==='Escape')closeAlerts()});window
 async function boot(){$('#auth-message').textContent='로그인 상태를 확인하고 있습니다…';$('#auth-retry').hidden=true;$('#login-form').hidden=true;
  try{try{const r=await fetch('/local/status',{cache:'no-store'});if(r.ok)state.mode={...await r.json(),local_mode:true}}catch{}if(state.mode.mode==='snapshot'){state.window='15m';$$('.periods button').forEach(b=>{b.disabled=b.dataset.window!=='15m'})}await restoreContext()}
  catch(e){app.hidden=true;$('#auth-screen').hidden=false;$('#auth-message').textContent='연결 확인 실패 · '+e.message;$('#auth-retry').hidden=false}}
+function renderMonitoringPaths(servers){
+ const root=$('.monitoring-paths');
+ root.replaceChildren(E('h3','모니터링 시스템 상태'));
+ const cards=E('div',undefined,'monitoring-path-grid');
+ const external=E('article',undefined,'monitoring-path-card');
+ external.append(E('h4','대시보드 접속'),E('p','외부 점검 지점 → 관리 웹'),
+  E('strong','외부 점검 미연결'),E('small','마지막 성공 미제공'));
+ const proxy=E('article',undefined,'monitoring-path-card');
+ const {row,kind}=serviceState(servers,'proxy');
+ proxy.append(E('h4','포털 점검 경로'),E('p','모니터링 서버 → 직원 포털'),
+  serviceStatusBadge(kind));
+ if(['normal','abnormal'].includes(kind)){
+  const detail=[];
+  if(Number.isInteger(row.http_status))detail.push('HTTP '+row.http_status);
+  if(Number.isFinite(row.duration_ms))detail.push(fmt(row.duration_ms)+' ms');
+  if(detail.length)proxy.append(E('p',detail.join(' · ')));
+ }
+ proxy.append(E('small','최근 점검 '+(row?.last_checked_at?date(row.last_checked_at)+' (KST)':'미확인')));
+ if(kind!=='normal')proxy.append(E('small','마지막 성공 시각 미제공'));
+ cards.append(external,proxy);root.append(cards);
+}
+
+function renderCollectorPreview(o){
+ const root=$('.collector-preview');
+ const heading=E('div',undefined,'collector-preview-heading');
+ heading.append(E('h3','수집 상태'),button('전체 보기 →',()=>go('collectors')));
+ root.replaceChildren(heading);
+ const scroll=E('div',undefined,'collector-preview-scroll');
+ const table=E('table',undefined,'read-table'),head=E('thead'),header=E('tr'),body=E('tbody');
+ for(const label of ['대상 (job)','역할','상태','최근 수집'])header.append(E('th',label));
+ head.append(header);
+ const add=(cells)=>{const row=E('tr');for(const value of cells)row.append(E('td',value));body.append(row)};
+ if(o?.targets?.status==='ok'){
+  for(const t of o.targets.items)add([t.job,t.job==='ec2-node'?'호스트 자원':targetLabel(t),
+   t.up===true?'수집 성공':t.up===false?'수집 실패':'미확인','미제공']);
+  if(!o.targets.items.length)add(['Prometheus','수집 대상','대상 없음','미제공']);
+ }else add(['Prometheus','수집 대상','조회 불가','미제공']);
+ const logs=o?.logs;
+ const logOK=logs?.['portal-api']?.status==='ok'&&logs?.['portal-nginx']?.status==='ok';
+ add(['Loki','로그 저장소',logOK?'조회 성공':'조회 미확인','미제공']);
+ table.append(head,body);scroll.append(table);root.append(scroll);
+}
+
+function renderIncidentTimeline(data){
+ const root=$('.incident-timeline');
+ root.replaceChildren(E('h3','장애 감지·복구 타임라인'));
+ if(!Array.isArray(data?.timeline)){
+  root.append(E('p','타임라인 조회 불가','read-muted'));return;
+ }
+ if(!data.timeline.length){
+  root.append(E('p','선택 기간에 해당하는 운영 사건 없음','read-muted'));return;
+ }
+ const start=Date.parse(data.start),end=Date.parse(data.end);
+ const percent=at=>Math.max(0,Math.min(100,(Date.parse(at)-start)/(end-start)*100));
+ const range=E('div',undefined,'incident-timeline-range');
+ range.append(E('span',date(data.start)),E('span',date(data.end)+' (KST)'));root.append(range);
+ for(const row of data.timeline){
+  const card=E('article',undefined,'incident-timeline-row');
+  const link=button(name(row.rule_id)+' · '+name(row.target_id),()=>openIncident(row.id));
+  const track=svg('svg',{viewBox:'0 0 100 8',preserveAspectRatio:'none','aria-hidden':'true'});
+  const detected=percent(row.detected_at);
+  track.append(svg('line',{x1:0,x2:100,y1:4,y2:4,stroke:'#dbe6f4','stroke-width':2}));
+  if(row.recovery_checked_at)track.append(svg('line',{x1:detected,x2:percent(row.recovery_checked_at),y1:4,y2:4,stroke:'#70ad9b','stroke-width':4}));
+  track.append(svg('line',{x1:detected,x2:detected,y1:0,y2:8,stroke:'#c64e66','stroke-width':1}));
+  if(row.recovery_checked_at){
+   const recovered=percent(row.recovery_checked_at);
+   track.append(svg('line',{x1:recovered,x2:recovered,y1:0,y2:8,stroke:'#28735e','stroke-width':1}));
+  }
+  card.append(link,track,E('small','감지 '+date(row.detected_at)+' · '+(row.recovery_checked_at
+   ?'복구 확인 '+date(row.recovery_checked_at):'복구 미확인')+' (KST)'));
+  root.append(card);
+ }
+ if(data.timeline_truncated)root.append(E('p','최근 20건 표시','read-muted'));
+ root.append(E('small','사건 종료 시각은 복구 확인 시각과 별도로 관리됩니다.','read-muted'));
+}
+
 function renderIncidentOverview(data){
  const trend=$('.incident-trend'),breakdown=$('.incident-breakdown');
  trend.replaceChildren();breakdown.replaceChildren();

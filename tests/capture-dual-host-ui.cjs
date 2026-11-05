@@ -21,7 +21,7 @@ const server=http.createServer((req,res)=>{
  else if(url.pathname==='/api/auth/context')data={user:{username:'검수 관리자',role:'admin'},csrf_token:'fixture-only'};
  else if(url.pathname==='/api/management/capabilities')data={mode:'live',writes_enabled:false};
  else if(url.pathname==='/api/dashboard')data={as_of:at,incident_counts:{new:0,accepted:0,in_progress:0,closed:5},servers:['app','database','proxy'].map(target_id=>({target_id,status:'normal',last_checked_at:at,...target_id==='proxy'&&{http_status:200}}))};
- else if(url.pathname==='/api/dashboard/incident-overview')data={start:new Date(ms-900000).toISOString(),end:at,buckets:Array.from({length:12},(_,i)=>({start:new Date(ms-900000+i*75000).toISOString(),detected:[0,0,1,2,0,1,0,0,1,0,0,0][i],closed:[0,0,0,0,1,1,2,0,0,1,0,0][i]})),types:{delay:2,collection:2,other:1}};
+ else if(url.pathname==='/api/dashboard/incident-overview')data={start:new Date(ms-900000).toISOString(),end:at,buckets:Array.from({length:12},(_,i)=>({start:new Date(ms-900000+i*75000).toISOString(),detected:[0,0,1,2,0,1,0,0,1,0,0,0][i],closed:[0,0,0,0,1,1,2,0,0,1,0,0][i]})),types:{delay:2,collection:2,other:1},timeline:[recent]};
  else if(url.pathname==='/api/observability'){observationQueries.push(url.searchParams.toString());data={...fixture,as_of:url.searchParams.get('end')||at,resources:{status:'ok',items:hosts}}}
  else if(url.pathname==='/api/incidents')data={items:url.searchParams.get('status')==='closed'?[recent]:[],total:1,page:1,page_size:20,page_count:1,counts:{new:0,accepted:0,in_progress:0,closed:5}};
  else if(url.pathname==='/api/incidents/fixture-delay')data={...recent,jobs:[{kind:'ai',status:'succeeded',result:{summary:'검수 예시입니다. DB 기능 점검에서 응답 지연이 관측된 뒤 정상 범위로 돌아왔습니다.'}}]};
@@ -56,6 +56,10 @@ const server=http.createServer((req,res)=>{
    assert.match(await monitoring.locator('.res-value').first().textContent(),/55/);
    assert.match(await page.locator('.service-health-card.service-proxy').textContent(),/HTTP 200/);
    assert.match(await page.locator('.incident-trend').textContent(),/발생 5건/);
+   assert.match(await page.locator('.incident-timeline').textContent(),/복구 미확인/);
+   assert.match(await page.locator('.monitoring-paths').textContent(),/외부 점검 미연결.*HTTP 200/);
+   assert.match(await page.locator('.collector-preview').textContent(),/Loki/);
+   assert.equal(await page.locator('.incident-breakdown + .collector-preview').count(),1);
    const layout=await page.locator('.dashboard-view').evaluate(e=>[e.scrollWidth,e.clientWidth]);
    assert(layout[0]<=layout[1]+2,width+'px dashboard horizontal overflow');
    if(process.env.SCHUTZ_PREVIEW_DIR){
@@ -67,6 +71,14 @@ const server=http.createServer((req,res)=>{
    }
    await monitoring.locator('.resource-detail-link').click();
    await page.locator('.resource-detail-header').waitFor();
+   const comparison=page.locator('.resource-compare');
+   assert.equal(await comparison.locator('.resource-compare-host').count(),2);
+   assert.equal(await comparison.locator('.resource-compare-metric').count(),6);
+   await comparison.getByRole('button',{name:'변화 확대'}).click();
+   const axes=await comparison.locator('.resource-axis-note').allTextContents();
+   assert.equal(axes.length,6);
+   assert.deepEqual(axes.slice(0,3),axes.slice(3));
+   assert(axes.every(label=>label.includes('미세 변화 확대')));
    assert.match(page.url(),/host=example-monitoring/);
    assert.match(await page.locator('.resource-detail-header').textContent(),/모니터링 서버/);
    await page.reload();await page.locator('.resource-detail-header').waitFor();
@@ -108,12 +120,17 @@ const server=http.createServer((req,res)=>{
    assert.equal(await page.locator('.heading h1').textContent(),'서비스 모니터링');
    const tabs=page.locator('.service-tabs button');
    assert.equal(await tabs.count(),3);
+   const checks=page.locator('.service-check-history');
+   assert.match(await checks.textContent(),/최근 FastAPI 점검 기록/);
    const first=await tabs.nth(0).boundingBox(),last=await tabs.nth(2).boundingBox();
    assert(first&&last&&Math.abs(first.y-last.y)<2,width+'px services must share one row');
    await tabs.nth(0).focus();await page.keyboard.press('ArrowRight');
    await page.waitForURL(/service=database/);
    assert.equal(await page.locator('#service-tab-database').evaluate(e=>e===document.activeElement),true);
+   assert.match(await checks.textContent(),/최근 PostgreSQL 점검 기록.*DB 점검 로그는 미수집/);
    await tabs.nth(2).click();await page.waitForURL(/service=proxy/);
+   assert.match(await checks.textContent(),/최근 Nginx 점검 기록.*HTTP 200/);
+   assert.doesNotMatch(await checks.textContent(),/FastAPI|PostgreSQL/);
    assert.match(await page.locator('.service-analysis-head').textContent(),/Nginx/);
    await page.goBack();await page.locator('#service-analysis-panel').waitFor();
    assert.match(await page.locator('.service-analysis-head').textContent(),/PostgreSQL/);

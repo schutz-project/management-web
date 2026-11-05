@@ -125,7 +125,47 @@ def create_app(settings=None,engine=None,metric_readers=None,observer=None):
                         kind={'response_delay':'delay',
                               'monitoring_target_down':'collection','portal_telemetry_missing':'collection'}.get(rule,'other')
                         types[kind]+=1
-            return {'start':stamp(lower),'end':stamp(upper),'buckets':buckets,'types':types}
+            timeline_query=select(Incident).where(
+                Incident.synthetic.is_(False),Incident.detected_at<=upper,
+                or_(Incident.closed_at.is_(None),Incident.closed_at>=lower),
+            ).order_by(Incident.detected_at.desc(),Incident.id).limit(21)
+            incidents=list(db.scalars(timeline_query))
+            selected={incident.id:incident for incident in incidents[:20]}
+            observed_until=min(upper,datetime.fromtimestamp(current,timezone.utc))
+            observations=db.execute(
+                select(IncidentEvidence.incident_id,Evidence.target_id,Evidence.occurred_at,Evidence.payload)
+                .join(Evidence,Evidence.id==IncidentEvidence.evidence_id)
+                .where(IncidentEvidence.incident_id.in_(selected),Evidence.kind=='prometheus',
+                       Evidence.occurred_at<=observed_until)
+                .order_by(IncidentEvidence.incident_id,Evidence.occurred_at,Evidence.id)
+            )
+            verified={}
+            last_normal={}
+            for incident_id,target_id,observed,payload in observations:
+                incident=selected[incident_id]
+                observed=utc(observed)
+                if (incident_id in verified or target_id!=incident.target_id
+                    or payload.get('rule_id')!=incident.rule_id
+                    or observed<utc(incident.detected_at)
+                    or (incident.closed_at and observed>utc(incident.closed_at))):
+                    continue
+                if payload.get('state')!='normal':
+                    last_normal.pop(incident_id,None)
+                    continue
+                previous=last_normal.get(incident_id)
+                if previous and 0<(observed-previous).total_seconds()<=60:
+                    verified[incident_id]=observed
+                last_normal[incident_id]=observed
+            timeline=[]
+            for incident in selected.values():
+                closed=utc(incident.closed_at)
+                detected=utc(incident.detected_at)
+                recovery=verified.get(incident.id)
+                timeline.append({'id':incident.id,'target_id':incident.target_id,
+                                 'rule_id':incident.rule_id,'detected_at':stamp(detected),
+                                 'recovery_checked_at':stamp(recovery),'closed_at':stamp(closed)})
+            return {'start':stamp(lower),'end':stamp(upper),'buckets':buckets,'types':types,
+                    'timeline':timeline,'timeline_truncated':len(incidents)>20}
     @app.get('/api/observability')
     async def observability(request:Request,window:str='15m',start:str|None=None,end:str|None=None):
         with factory.begin() as db: admin(request,db)

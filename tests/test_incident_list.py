@@ -2,7 +2,7 @@ import unittest
 from datetime import timedelta
 from sqlalchemy import select,func
 from sqlalchemy.dialects import postgresql
-from management.models import Incident,Job,Attempt,Evidence,IncidentEvidence,Target
+from management.models import Incident,Job,Attempt,Evidence,IncidentEvidence,Target,PrometheusAlertState
 from management.incident_list import query_conditions,severity_expression
 from portal.models import now
 from test_incident_actions import IncidentActionFixture
@@ -133,3 +133,54 @@ class DashboardOverviewTests(IncidentActionFixture):
         self.assertEqual(rows['database']['status'],'unknown')
         self.assertFalse(rows['portal-login']['collection_delayed'])
         self.assertEqual(rows['portal-login']['status'],'unknown')
+
+    def test_timeline_keeps_recovery_after_the_next_incident_on_the_same_target(self):
+        moment=now()
+        detected=moment-timedelta(minutes=8)
+        recovered=moment-timedelta(minutes=6)
+        closed=moment-timedelta(minutes=5)
+        with self.factory.begin() as db:
+            db.add(Incident(id='verified-recovery',target_id='shared-target',
+                            rule_id='monitoring_target_down',status='closed',
+                            detected_at=detected,closed_at=closed))
+            db.add(Incident(id='closed-only',target_id='closed-only',
+                            rule_id='monitoring_target_down',status='closed',
+                            detected_at=detected,closed_at=closed))
+            db.flush()
+            for index,at in enumerate((recovered-timedelta(seconds=30),recovered)):
+                evidence_id=f'stored-normal-{index}'
+                db.add(Evidence(id=evidence_id,target_id='shared-target',kind='prometheus',
+                                occurred_at=at,payload={'rule_id':'monitoring_target_down',
+                                                        'state':'normal'}))
+                db.flush()
+                db.add(IncidentEvidence(incident_id='verified-recovery',evidence_id=evidence_id))
+            db.add(PrometheusAlertState(id='shared-state',target_key='shared-target',
+                                        rule_name='MonitoringTargetDown',labels={},state='normal',
+                                        normal_samples=2,incident_id='verified-recovery',
+                                        evaluated_at=recovered))
+        self.login_cookie()
+
+        def historical_timeline():
+            response=self.client.get('/api/dashboard/incident-overview',params={
+                'window':'custom','start':(moment-timedelta(minutes=10)).isoformat(),
+                'end':(moment-timedelta(minutes=4)).isoformat()})
+            self.assertEqual(response.status_code,200)
+            return {row['id']:row for row in response.json()['timeline']}
+
+        before=historical_timeline()
+        self.assertIsNone(before['closed-only']['recovery_checked_at'])
+        self.assertEqual(before['verified-recovery']['recovery_checked_at'],
+                         recovered.isoformat().replace('+00:00','Z'))
+
+        with self.factory.begin() as db:
+            db.add(Incident(id='next-incident',target_id='shared-target',
+                            rule_id='monitoring_target_down',status='new',
+                            detected_at=moment-timedelta(minutes=2)))
+            db.flush()
+            state=db.get(PrometheusAlertState,'shared-state')
+            state.incident_id='next-incident'
+            state.state='firing'
+            state.normal_samples=0
+            state.evaluated_at=moment-timedelta(minutes=2)
+
+        self.assertEqual(historical_timeline(),before)
