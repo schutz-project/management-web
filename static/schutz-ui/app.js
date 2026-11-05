@@ -1,7 +1,7 @@
 /* Existing Management Web API adapter. No external dependency. */
 (()=>{'use strict';
 const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
-const state={user:null,csrf:null,view:'dashboard',service:'app',serviceScales:{app:'full',database:'full',proxy:'full'},graphScale:'full',resourceKey:'cpu',resourceHost:null,resourceScales:{cpu:'full',memory:'full',disk:'full'},overlay:null,window:'15m',customRange:null,filter:'open',q:'',severity:'all',stage:'all',listScroll:0,page:1,generation:0,busy:false,timer:null,data:null,dashboard:null,mode:{mode:'live',writes_enabled:false}};
+const state={user:null,csrf:null,view:'dashboard',service:'app',serviceScales:{app:'full',database:'full',proxy:'full'},graphScale:'full',resourceKey:'cpu',resourceHost:null,overlay:null,window:'15m',customRange:null,filter:'open',q:'',severity:'all',stage:'all',listScroll:0,page:1,generation:0,busy:false,timer:null,data:null,dashboard:null,mode:{mode:'live',writes_enabled:false}};
 const labels={new:'신규',accepted:'접수',in_progress:'조치 중',closed:'종료',normal:'정상',abnormal:'이상',unknown:'미확인',succeeded:'성공',failed:'실패',pending:'대기',running:'실행 중',availability_failure:'가용성 장애',response_delay:'응답 지연',login_failures:'반복 로그인 실패',app:'FastAPI',database:'직원 조회',proxy:'Nginx', 'portal-login':'로그인 감시',ai:'AI 분석',slack:'최초 Slack 알림',slack_ai:'AI 완료 Slack 알림',slack_recovery:'복구 Slack 알림',monitoring_target_down:'수집 대상 연결 실패',portal_telemetry_missing:'앱 메트릭 누락',portal_high_error_rate:'5xx 비율 증가',notification_delivery_test:'알림 전달 시험',stale:'수집 지연',unavailable:'조회 실패',no_data:'데이터 없음'};
 const reasons={DELIVERY_SUCCESS_REQUIRED:'최초 Slack·AI 분석·AI 완료 Slack의 실제 처리 성공이 필요합니다.',PROMETHEUS_RECOVERY_NOT_CONFIRMED:'최신 Prometheus 평가와 실제 정상 지표가 두 번 확인되어야 합니다.',ACTION_REQUIRED:'조치 기록이 필요합니다.',TEST_STOP_REQUIRED:'시험 입력 중지 확인이 필요합니다.',LOG_COLLECTION_STALE:'로그 수집이 지연되고 있습니다.',FAILURE_FREE_WINDOW_REQUIRED:'신규 로그인 실패 없이 60초가 지나야 합니다.',TWO_HEALTHY_CHECKS_REQUIRED:'정상 점검 2회 연속이 필요합니다.',CHECK_COLLECTION_STALE:'최근 정상 점검이 필요합니다.'};
 const E=(tag,text,cls)=>{const e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e};
@@ -110,7 +110,7 @@ function renderDashboard(d,o,overview){
  $('.side-status').replaceChildren(E('div','시스템 상태'),E('p',!d?'미확인':known?'기능 점검 정상':'점검 확인 필요'),E('div','조회 시각'),E('p',date(d?.as_of||o?.as_of)));
  const targets=o?.targets?.status==='ok'?o.targets.items:null;const vals=[c?.new,c?c.accepted+c.in_progress:null,c?.closed,targets?targets.filter(t=>t.up).length+' / '+targets.length:null];const notes=['관리자 대응 대기','접수 · 조치 진행','전체 종료 이력','Prometheus 수집 대상'];
  $$('.kpi').forEach((e,i)=>{e.querySelector('strong').textContent=vals[i]===undefined||vals[i]===null?'미확인':String(vals[i])+(i<3?' 건':'');e.querySelector('div:nth-child(2)>small').textContent=notes[i];wire(e,()=>go(i===3?'collectors':'incidents',i===2?'closed':'open'))});$$('.kpi')[2].querySelector('h3').textContent='종료 사건 이력';$('.tiny-badge').textContent=open===null?'?':String(open);
- bell.classList.toggle('no-alerts',o?.alerts?.status==='ok'&&!o.alerts.items.length&&open===0);renderServiceHealth(servers);renderMonitoringPaths(servers);renderServices(o);renderResources(o);renderIncidentOverview(overview);renderIncidentTimeline(overview);renderCollectorPreview(o);$('.footer p:last-child').textContent=modeNote();
+ bell.classList.toggle('no-alerts',o?.alerts?.status==='ok'&&!o.alerts.items.length&&open===0);renderServiceHealth(servers);renderMonitoringPaths(servers,o);renderServices(o);renderResources(o);renderIncidentOverview(overview);renderIncidentTimeline(overview);renderCollectorPreview(o);$('.footer p:last-child').textContent=modeNote();
  $('#incidents .panel-head a').onclick=e=>{e.preventDefault();go('incidents')};$('#incidents .panel-head .link').textContent='분석 이력 →';$('#incidents .panel-head .link').onclick=()=>go('incidents','closed');
  wire($('.resources .panel-head .link'),()=>go('resources'));
 }
@@ -132,14 +132,16 @@ function renderServiceHealth(servers){
  const root=$('.service-health-grid');
  root.replaceChildren();
  const success={app:'기능 점검 성공',database:'DB 연결·기능 점검 성공',proxy:'기능 점검 성공'};
- for(const [key,def] of Object.entries(serviceDefinitions)){
+ for(const key of ['proxy','app','database']){
+  const def=serviceDefinitions[key];
   const {row,kind,label}=serviceState(servers,key);
   const card=E('article',undefined,'service-health-card service-'+key);
   const heading=E('h3'),icon=E('span',undefined,'service-icon');
   icon.append(uiIcon(key));heading.append(icon,E('span',def.name));
   const status=key==='proxy'&&['normal','abnormal'].includes(kind)&&Number.isInteger(row.http_status)
    ? 'HTTP '+row.http_status : kind==='normal'?success[key]:label;
-  card.append(heading,E('strong',status,'service-health-result'),serviceStatusBadge(kind),
+  const checks={proxy:'프록시 자체 점검 · /proxy-health',app:'앱 기능 점검 · /health',database:'직원 조회 점검'};
+  card.append(heading,E('p',checks[key],'read-muted'),E('strong',status,'service-health-result'),serviceStatusBadge(kind),
    E('small','마지막 점검 '+(row?.last_checked_at?date(row.last_checked_at)+' (KST)':'미확인')));
   root.append(card);
  }
@@ -153,7 +155,6 @@ function servicePlot(holder,points,color,label,compact=false,zoom=false){holder.
 function serviceAuxiliary(o,key){const grid=E('div',undefined,'service-aux');for(const [label,value]of auxiliary(o,key)){const item=E('div');item.append(E('span',label),E('strong',value));grid.append(item)}return grid}
 function renderServices(o){const root=$('.services');root.replaceChildren();for(const key of ['app','database','proxy']){const def=serviceDefinitions[key],metric=serviceMetric(o,key),card=E('article',undefined,'service service-'+key),head=E('div',undefined,'svc-head'),identity=E('div',undefined,'service-identity'),icon=E('span',undefined,'service-icon');icon.append(uiIcon(key));const names=E('div');names.append(E('strong',def.name),E('small',def.target));identity.append(icon,names);head.append(identity);const data=E('div',undefined,'svc-data');data.append(E('strong',metric?.status==='no_data'?'미수집':metricText(metric,'ms')));const plot=E('div',undefined,'service-chart');servicePlot(plot,metric?.points,def.color,def.label,true);const caption=E('div',undefined,'svc-caption');caption.append(E('span',(o?.historical?'선택 구간 ':'최근 ')+(o?.window_minutes||'미확인')+'분 · '+date(o?.as_of)+' (KST)'),E('span','지표 수집: '+(metric?.status==='ok'?'표본 확인':name(metric?.status||'no_data'))));card.append(head,E('p',def.label,'svc-label'),data,plot,serviceAuxiliary(o,key),caption,E('span','상세 보기 →','service-card-link'));wire(card,()=>go('services',null,key));root.append(card)}const logs=o?.logs,ok=logs&&['portal-api','portal-nginx'].every(k=>logs[k]?.status==='ok'),loki=$('.loki-status');loki.replaceChildren(E('b','로그 저장소 · Loki'),E('span',ok?'최근 5분 로그 조회 성공 · 표시 '+Object.values(logs).reduce((n,v)=>n+v.items.length,0)+'건':'로그 조회 미확인'),button('로그 분석 →',()=>go('logs')));}
 
-function resourceControls(scope='summary'){const tools=E('div',undefined,'resource-scale');tools.setAttribute('role','group');tools.setAttribute('aria-label',scope==='detail'?'선택 자원 그래프 축 범위':'현황 공통 그래프 축 범위');const current=scope==='detail'?state.resourceScales[state.resourceKey]:state.graphScale;for(const [key,label]of [['full','전체 0~100%'],['zoom','변화 확대']]){const b=button(label,()=>{if(scope==='detail'){state.resourceScales[state.resourceKey]=key;page.replaceChildren();showResources(state.data)}else{state.graphScale=key;renderResources(state.data)}});b.setAttribute('aria-pressed',String(current===key));tools.append(b)}return tools}
 function resourceValues(points){return (points||[]).filter(p=>Number.isFinite(p[0])&&Number.isFinite(p[1])&&p[1]>=0&&p[1]<=100)}
 function resourceBounds(values,zoom){if(!zoom||!values.length)return [0,100];const lo=Math.min(...values.map(p=>p[1])),hi=Math.max(...values.map(p=>p[1])),pad=Math.max((hi-lo)*.2,.02);return [Math.max(0,lo-pad),Math.min(100,hi+pad)]}
 
@@ -371,10 +372,45 @@ function showServices(o){const key=state.service,def=serviceDefinitions[key],met
  metricsPanel.append(E('h3','주요 지표'),serviceAuxiliary(o,key));
  evidenceRow.append(metricsPanel,serviceCheckHistory(o,key,health));
  panel.append(chartRow,evidenceRow,E('p','유효 표본 '+stats.count+'개 · 평균·최대·최소·표준 편차는 구간별 p95 표시 표본의 통계이며 전체 요청의 통계가 아닙니다.','read-muted'));if(metric?.status!=='ok')panel.append(E('p','지표 상태: '+name(metric?.status||'no_data')+' · 조회 가능한 과거 추이와 구분합니다.','read-note'));layout.append(tabs,panel);page.append(layout);if(key==='app')page.append(E('p','HTTP 요청량·5xx 서버 오류는 앱 계측값입니다.','read-muted'));if(key==='database')page.append(E('p','앱 DB 작업시간은 애플리케이션 내부 계측값입니다. PostgreSQL 전체 부하나 세션 수를 뜻하지 않습니다. DB 연결 수·활성 세션은 미수집입니다.','read-muted'));if(key==='proxy')page.append(E('p','핵심 수치는 /health 경로 기준입니다. 아래 경로별 지표는 별도로 구분합니다.','read-muted'));
- const selected=state.service==='app'?['app_routes','app_p95_routes']:state.service==='database'?[]:['proxy_requests','proxy_errors','proxy_p95','upstream_p95'];
- const descriptions={app_routes:['경로별 요청량','건/초',1],app_p95_routes:['경로별 응답시간 p95','ms',1],proxy_requests:['경로별 요청량','건/초',1],proxy_errors:['경로별 5xx','건/초',1],proxy_p95:['전체 응답시간 p95','ms',1000],upstream_p95:['업스트림 응답시간 p95','ms',1000]};
- for(const key of selected){const[label,unit,mult]=descriptions[key],data=o.details?.[key],box=E('article',undefined,'detail-card');box.append(E('h3',label));if(data?.status!=='ok')box.append(E('p',name(data?.status||'unknown')));else if(!data.items.length)box.append(E('p','일치 시계열 없음 · 오류율 0으로 단정하지 않습니다.','read-muted'));else{const table=E('table',undefined,'read-table'),head=E('thead'),hr=E('tr');hr.append(E('th','요청 경로'),E('th',unit),E('th','추이'));head.append(hr);table.append(head);const body=E('tbody');for(const row of data.items){const tr=E('tr'),graph=E('td');tr.append(E('td',row.route),E('td',row.value===null?'미확인':fmt(row.value*mult)));const plot=E('div',undefined,'route-plot');chart(plot,row.points.map(p=>[p[0],p[1]===null?null:p[1]*mult]),'#087df3');graph.append(plot);tr.append(graph);body.append(tr)}table.append(body);box.append(table)}page.append(box)}
+ if(key!=='database')page.append(routePerformance(o,key));
 }
+function routePerformance(o,key){
+ const columns=key==='app'
+  ? [['app_routes','요청량 (건/초)',1],['app_p95_routes','응답시간 p95 (ms)',1]]
+  : [['proxy_requests','요청량 (건/초)',1],['proxy_errors','5xx (건/초)',1],
+     ['proxy_p95','전체 응답시간 p95 (ms)',1000],['upstream_p95','업스트림 응답시간 p95 (ms)',1000]];
+ const metrics=columns.map(([id,label,mult])=>{
+  const data=o.details?.[id];
+  return {label,mult,status:data?.status,rows:new Map((data?.items||[]).map(row=>[row.route,row]))};
+ });
+ const box=E('section',undefined,'detail-card'),scroll=E('div',undefined,'phase3-table-scroll');
+ box.append(E('h3','경로별 성능'));
+ const table=E('table',undefined,'read-table phase3-route-table'),head=E('thead'),hr=E('tr'),body=E('tbody');
+ for(const label of ['요청 경로',...metrics.map(metric=>metric.label)])hr.append(E('th',label));
+ head.append(hr);table.append(head,body);scroll.append(table);box.append(scroll);
+ const routes=new Set(metrics.flatMap(metric=>[...metric.rows.keys()]));
+ for(const route of routes){
+  const tr=E('tr');tr.append(E('td',route));
+  for(const {mult,status,rows} of metrics){
+   const cell=E('td'),row=rows.get(route);
+   const value=status==='unavailable'?'조회 실패':!row?'데이터 없음':Number.isFinite(row.value)?fmt(row.value*mult):'미확인';
+   cell.append(E('strong',value));
+   if(status==='ok'&&row?.points?.some(p=>Number.isFinite(p[1]))){
+    const plot=E('div',undefined,'route-plot');
+    chart(plot,row.points.map(([at,value])=>[at,Number.isFinite(value)?value*mult:null]),'#087df3');
+    cell.append(plot);
+   }
+   tr.append(cell);
+  }
+  body.append(tr);
+ }
+ if(!routes.size){
+  const tr=E('tr'),cell=E('td',metrics.some(metric=>metric.status==='unavailable')?'경로별 지표 조회 실패':'경로별 데이터 없음');
+  cell.colSpan=columns.length+1;tr.append(cell);body.append(tr);
+ }
+ return box;
+}
+
 function serviceCheckHistory(o,key,health){
  const section=E('section',undefined,'service-check-history service-detail-box');
  section.append(E('h3','최근 '+serviceDefinitions[key].name+' 점검 기록'));
@@ -445,6 +481,7 @@ function resourceComparison(o,hosts){
     const series=host.history?.[key],stats=sampleSummary(series?.points);
     const current=host.status==='ok'&&series?.status==='ok'&&Number.isFinite(host[key])?host[key]:null;
     const card=E('section',undefined,'resource-compare-metric');
+    if(key===state.resourceKey&&state.resourceHost===(host.host_id||host.instance))card.classList.add('resource-compare-selected');
     card.append(E('h5',resourceNames[index]+' 사용률'),collectionBadge(host,series));
     const values=E('dl',undefined,'resource-compare-values');
     for(const [label,value]of [[o.historical?'종료 시점':'현재',current],['평균',stats.mean],['최대',stats.max]]){
@@ -461,18 +498,104 @@ function resourceComparison(o,hosts){
  section.append(grid,E('p','수집 상태는 서버 전체의 정상 여부를 뜻하지 않습니다.','read-muted'));
  return section;
 }
-function showResources(o){pageTitle('서버 리소스 상세',o);const hosts=o.resources?.items||[];page.append(resourceComparison(o,hosts));if(!hosts.length){page.append(E('p',o.resources?.status==='unavailable'?'서버 자원 조회 실패':'서버 자원 데이터 없음','read-note'));return}const host=hosts.find(h=>(h.host_id||h.instance)===state.resourceHost)||hosts[0];state.resourceHost=host.host_id||host.instance;if(state.window==='custom')page.append(E('p','사용자 지정 기간의 과거 지표입니다. 현재값 대신 선택 종료 시점의 값을 표시합니다.','read-note'));const top=E('div',undefined,'resource-detail-header');top.append(E('h3',hostTitle(host)),collectionBadge(host));if(hosts.length>1){const select=E('select');select.setAttribute('aria-label','메트릭 수집 대상');for(const h of hosts){const option=E('option',hostTitle(h));option.value=h.host_id||h.instance;select.append(option)}select.value=host.host_id||host.instance;select.onchange=()=>{state.resourceHost=select.value;remember();page.replaceChildren();showResources(o)};top.append(select)}page.append(top);const layout=E('div',undefined,'resource-analysis-layout'),tabs=E('div',undefined,'resource-tabs');tabs.setAttribute('role','tablist');tabs.setAttribute('aria-label','자원 선택');tabs.setAttribute('aria-orientation','vertical');resourceKeys.forEach((key,i)=>{const b=button('',()=>{state.resourceKey=key;remember();page.replaceChildren();showResources(o)}),icon=E('img');icon.src='/static/schutz-ui/assets/'+['cpu.png','memory.png','disk.png'][i];icon.alt='';b.append(icon,E('span',resourceNames[i]));b.setAttribute('role','tab');b.setAttribute('id','resource-tab-'+key);b.setAttribute('aria-controls','resource-analysis-panel');b.setAttribute('aria-selected',String(state.resourceKey===key));b.tabIndex=state.resourceKey===key?0:-1;b.onkeydown=e=>{if(['ArrowDown','ArrowUp','ArrowRight','ArrowLeft','Home','End'].includes(e.key)){e.preventDefault();const next=e.key==='Home'?0:e.key==='End'?2:(i+(['ArrowDown','ArrowRight'].includes(e.key)?1:2))%3;state.resourceKey=resourceKeys[next];remember();page.replaceChildren();showResources(o);page.querySelector('#resource-tab-'+state.resourceKey)?.focus?.()}};tabs.append(b)});const key=state.resourceKey,index=resourceKeys.indexOf(key),h=host.history?.[key],stats=sampleSummary(h?.points),current=host.status==='ok'&&Number.isFinite(host[key])?host[key]:null,panel=E('section',undefined,'resource-analysis-panel');panel.id='resource-analysis-panel';panel.setAttribute('role','tabpanel');panel.setAttribute('aria-labelledby','resource-tab-'+key);const heading=E('div',undefined,'resource-analysis-heading');heading.append(E('h3',resourceNames[index]+' 사용률'),collectionBadge(host,h),resourceControls('detail'));panel.append(heading,E('strong',current===null?(state.window==='custom'?'종료 시점 값 미확인':'현재값 미확인'):fmt(current)+' %','resource-analysis-current'));if(host.status!=='ok'||h?.status!=='ok')panel.append(E('p','현재 수집 상태: '+metricCollection(host,h)+' · 조회 가능한 과거 표본만 표시합니다.','read-note'));const plot=E('div',undefined,'resource-detail-plot');resourceChart(plot,h?.points,resourceColors[index],resourceNames[index],{zoom:state.resourceScales[key]==='zoom'});panel.append(plot);const summaries=E('div',undefined,'resource-analysis-stats');for(const [label,value,unit]of [[state.window==='custom'?'종료 시점':'현재값',current,'%'],['평균값',stats.mean,'%'],['최대값',stats.max,'%'],['최소값',stats.min,'%'],['표본 변동 폭',stats.span,'%p']]){const item=E('div'),icon=E('span',undefined,'resource-stat-icon stat-icon-'+summaries.children.length);icon.setAttribute('aria-hidden','true');icon.append(uiIcon(['resourceCurrent','resourceMean','resourceMax','min','resourceSpread'][summaries.children.length]));const content=E('div');content.append(E('span',label),E('strong',value===null?'미확인':fmt(value,3)+unit));item.append(icon,content);summaries.append(item)}const latest=resourceValues(h?.points).at(-1);panel.append(summaries,E('p','마지막 유효 표본 '+(latest?date(latest[0])+' (KST)':'미확인')+' · 그래프 평가 간격 '+(o.step_seconds||'미제공')+'초','read-muted'),E('p','평균·최대·최소는 선택 기간의 표시 표본 기준입니다. 수집 상태는 서버 전체의 정상 여부를 뜻하지 않습니다.','resource-axis-note'));layout.append(tabs,panel);page.append(layout)}
-function targetLabel(t){if(t.job==='portal-health')return t.instance.includes('proxy-health')?'프록시 생존 점검':'앱 생존 점검';return {'ec2-node':'서비스 서버 자원','portal-otel':'앱 서비스 지표',prometheus:'메트릭 저장소','portal-db-health':'직원 조회 점검'}[t.job]||t.job}
+function showResources(o){
+ pageTitle('서버 리소스 상세',o);
+ if(o.resources?.status==='unavailable')page.append(E('p','서버 자원 조회 실패','read-note'));
+ page.append(resourceComparison(o,o.resources?.items||[]));
+ const target=page.querySelector('.resource-compare-selected');
+ target?.scrollIntoView?.({block:'nearest'});
+}
+function targetLabel(t,o){
+ if(t.job==='portal-health')return t.instance.includes('proxy-health')?'프록시 생존 점검':'앱 생존 점검';
+ if(t.job==='ec2-node'){
+  const matches=(o?.resources?.items||[]).filter(host=>host.instance===t.instance);
+  const role=matches.length===1?matches[0].server_role:null;
+  return {service:'서비스 서버 자원',monitoring:'모니터링 서버 자원'}[role]||'역할 미확인 서버 자원';
+ }
+ return {'portal-otel':'앱 서비스 지표',prometheus:'메트릭 저장소','portal-db-health':'직원 조회 점검'}[t.job]||t.job;
+}
 function summaryCard(label,value){const card=E('article',undefined,'read-stat');card.append(E('p',label),E('strong',String(value)));return card}
 function collectorContent(o){
  const root=E('div'),targetOK=o?.targets?.status==='ok',alertOK=o?.alerts?.status==='ok',targets=targetOK?o.targets.items:[],alerts=alertOK?o.alerts.items:[];
  const summary=E('div',undefined,'read-stats');for(const[label,value]of [['전체 수집 대상',targetOK?targets.length:'미확인'],['수집 성공',targetOK?targets.filter(t=>t.up===true).length:'미확인'],['수집 실패',targetOK?targets.filter(t=>t.up===false).length:'미확인'],['발생 중 경보',alertOK?alerts.length:'미확인']])summary.append(summaryCard(label,value));root.append(summary);
  const alertBox=E('section',undefined,'read-alert');alertBox.append(E('h3','실시간 Prometheus 경보'));if(!alertOK)alertBox.append(E('p','경보 조회 실패 · 상태 미확인'));else if(!alerts.length)alertBox.append(E('p','조회 시점에 발생 중인 Prometheus 경보가 없습니다. 미종료 사건 수와는 별도입니다.'));else for(const a of alerts){const row=E('div',undefined,'alert-row');row.append(E('b',a.name),E('span',a.severity||'심각도 미제공'));alertBox.append(row)}root.append(alertBox);
- const section=E('section',undefined,'read-section');section.append(E('h3','수집 대상 목록'));if(!targetOK)section.append(E('p','수집 대상 조회 실패'));else{const table=E('table',undefined,'read-table');const head=E('thead'),hr=E('tr');for(const t of ['대상','수집 내용','상태','연결 정보'])hr.append(E('th',t));head.append(hr);table.append(head);const body=E('tbody');for(const t of targets){const tr=E('tr');tr.append(E('td',targetLabel(t)),E('td',roles[t.job]||(t.instance.includes('proxy-health')?'Nginx 응답 점검':'FastAPI 응답 점검')));const status=E('td');status.append(E('span',t.up===true?'수집 성공':t.up===false?'수집 실패':'미확인',t.up===true?'status-pill':'status-pill status-unknown'));tr.append(status);const cell=E('td'),extra=E('tr',undefined,'read-detail');extra.hidden=true;const td=E('td');td.colSpan=4;const dl=E('dl',undefined,'read-definitions');for(const[k,v]of [['job',t.job],['수집 주소',t.instance],['최근 수집','개별 수집 시각 미제공']])dl.append(E('dt',k),E('dd',v));td.append(dl);extra.append(td);const b=button('상세 보기',()=>{extra.hidden=!extra.hidden;b.textContent=extra.hidden?'상세 보기':'접기';b.setAttribute('aria-expanded',String(!extra.hidden))});b.setAttribute('aria-expanded','false');cell.append(b);tr.append(cell);body.append(tr,extra)}table.append(body);section.append(table)}root.append(section,E('p','수집 성공은 결과를 받아온 상태입니다. 서비스 기능 정상 여부는 별도 점검으로 판단합니다.','read-muted'));
+ const section=E('section',undefined,'read-section');section.append(E('h3','수집 대상 목록'));
+ if(!targetOK)section.append(E('p','수집 대상 조회 실패'));
+ else{
+  const scroll=E('div',undefined,'phase3-table-scroll');
+  const table=E('table',undefined,'read-table phase3-target-table'),head=E('thead'),hr=E('tr'),body=E('tbody');
+  for(const label of ['대상','수집 내용','상태','Job','수집 주소','마지막 수집 시도'])hr.append(E('th',label));
+  for(const t of targets){
+   const tr=E('tr'),status=E('td');
+   status.append(E('span',t.up===true?'수집 성공':t.up===false?'수집 실패':'미확인',t.up===true?'status-pill':'status-pill status-unknown'));
+   if(t.up===false)status.append(E('small',t.failure_reason||'원인 미확인','phase3-collection-error'));
+   tr.append(E('td',targetLabel(t,o)),E('td',roles[t.job]||(t.instance.includes('proxy-health')?'Nginx 응답 점검':'FastAPI 응답 점검')),
+    status,E('td',t.job),E('td',t.instance||'미제공'),E('td',t.last_scrape_at?date(t.last_scrape_at)+' (KST)':'미제공'));
+   body.append(tr);
+  }
+  head.append(hr);table.append(head,body);scroll.append(table);section.append(scroll);
+ }
+ root.append(section,E('p','수집 성공은 결과를 받아온 상태입니다. 서비스 기능 정상 여부는 별도 점검으로 판단합니다.','read-muted'));
  const logs=o?.logs;root.append(E('div','Loki · 로그 저장소: '+(logs&&Object.values(logs).every(x=>x.status==='ok')?'최근 로그 조회 성공':'이번 데이터에서 상태 미확인'),'read-note'));return root;
 }
 function showCollectors(o){page.append(E('h2','수집 상태'),E('p','조회 '+date(o.as_of)+' · KST','read-muted'),collectorContent(o))}
-function showLogs(o){pageTitle('로그 분석',o);page.append(E('p','로그 조회 범위는 선택한 지표 기간과 별개로 최근 5분, 서비스별 최대 20건입니다.'));const input=E('input');input.type='search';input.placeholder='요청 ID · 경로 · 이벤트 검색';input.setAttribute('aria-label','로그 검색');page.append(input);const rows=E('div');page.append(rows);function render(){rows.replaceChildren();for(const service of ['portal-api','portal-nginx']){const data=o.logs?.[service],section=E('section',undefined,'detail-card');section.append(E('h3',service));if(data?.status!=='ok')section.append(E('p',name(data?.status||'unknown')));else{const list=data.items.filter(x=>JSON.stringify(x.fields).toLowerCase().includes(input.value.toLowerCase()));if(!list.length)section.append(E('p','일치 로그 없음'));for(const row of list){const e=E('details');e.append(E('summary',date(row.collected_at)+' · '+(row.fields.route||'other')+' · '+(row.fields.event_type||row.fields.status||'')),pretty(row.fields));section.append(e)}}rows.append(section)}}input.oninput=render;render()}
+function logDuration(value,multiplier=1){
+ if(typeof value==='string'&&/^\d+(?:\.\d+)?$/.test(value))value=Number(value);
+ return Number.isFinite(value)&&value>=0?fmt(value*multiplier,3)+' ms':'미수집';
+}
+function showLogs(o){
+ pageTitle('로그 분석',o);
+ const toolbar=E('div',undefined,'phase3-log-toolbar'),input=E('input'),hide=E('input'),toggle=E('label');
+ input.type='search';input.placeholder='요청 ID · 경로 · 이벤트 검색';input.setAttribute('aria-label','로그 검색');
+ hide.type='checkbox';toggle.append(hide,E('span','정상 점검 숨기기'));
+ toolbar.append(input,toggle,E('small','최근 5분 · 서비스별 최대 20건','read-muted'));page.append(toolbar);
+ const rows=E('div',undefined,'phase3-log-grid');page.append(rows);
+ let selected=null;
+ function render(){
+  rows.replaceChildren();
+  for(const [service,label] of [['portal-nginx','Nginx 접근 로그'],['portal-api','FastAPI 처리 로그']]){
+   const data=o.logs?.[service],section=E('section',undefined,'detail-card phase3-log-panel'),isProxy=service==='portal-nginx';
+   section.append(E('h3',label));rows.append(section);
+   if(data?.status!=='ok'){section.append(E('p','로그 조회 실패','read-note'));continue}
+   const query=input.value.trim().toLowerCase();
+   const list=data.items.filter(({fields:f})=>{
+    const code=Number(f.status_code??f.status);
+    const check=['/health','/proxy-health','/internal/check/employee'].includes(f.route);
+    return (!hide.checked||!check||code<200||code>=300||!Number.isFinite(code)||Boolean(f.reason_code))
+     && [f.request_id,f.route,f.event_type].some(value=>String(value??'').toLowerCase().includes(query));
+   });
+   if(selected?.service!==service&&selected?.id&&!list.some(({fields})=>fields.request_id===selected.id))
+    section.append(E('p','연결 로그 미확인 · 현재 조회 범위','read-note'));
+   if(!list.length)section.append(E('p','검색 결과 없음','read-muted'));
+   const header=E('div',undefined,'phase3-log-row phase3-log-head');
+   for(const title of ['시각','경로','결과','처리 시간'])header.append(E('span',title));
+   if(list.length)section.append(header);
+   for(const row of list){
+    const f=row.fields,id=f.request_id,code=f.status_code??f.status;
+    const duration=isProxy?logDuration(f.request_time,1000):logDuration(f.duration_ms);
+    const matched=Boolean(selected&&(selected.row===row||(id&&id===selected.id)));
+    const entry=E('details',undefined,matched?'phase3-log-selected':undefined);
+    entry.open=matched;
+    const summary=E('summary',undefined,'phase3-log-row');
+    for(const value of [date(row.collected_at),f.route||'other',code??f.event_type??'미확인',duration])
+     summary.append(E('span',String(value)));
+    const summaryIndex=rows.querySelectorAll('summary.phase3-log-row').length;
+    summary.onclick=event=>{
+     event.preventDefault();
+     const sameRow=selected?.row===row;
+     selected=sameRow?null:{id,service,row};render();
+     rows.querySelectorAll('summary.phase3-log-row')[summaryIndex]?.focus();
+    };
+    const timings=isProxy?[['전체 요청',duration],['업스트림 응답',logDuration(f.upstream_response_time,1000)],['업스트림 상태',f.upstream_status??'미수집']]
+     :[['이벤트',f.event_type??'미수집'],['앱 처리',duration],['DB 작업',logDuration(f.db_duration_ms)]];
+    const raw=E('details');raw.append(E('summary','원본 JSON'),pretty(f));
+    entry.append(summary,definitionPanel('요청 상세',[['요청 ID',id||'미수집'],...timings,['실패 사유',f.reason_code??'기록 없음']]),raw);
+    section.append(entry);
+   }
+  }
+ }
+ input.oninput=()=>{selected=null;render()};hide.onchange=()=>{selected=null;render()};render();
+}
 function definitionPanel(title,rows){const panel=E('section',undefined,'settings-card');panel.append(E('h3',title));const dl=E('dl',undefined,'settings-definitions');for(const[k,v]of rows){const row=E('div');row.append(E('dt',k),E('dd',v));dl.append(row)}panel.append(dl);return panel}
 function showSettings(){
  const snapshot=state.mode.mode==='snapshot';page.append(E('h2','설정'),E('p','접속 환경 · 계정 · 데이터 표시 기준','read-muted'),E('div',snapshot?'저장 데이터 모드 · 실시간 서버 연결 없음':'기존 Management Web API 연결','read-note'));
@@ -500,16 +623,16 @@ window.addEventListener('keydown',e=>{if(e.key==='Escape')closeAlerts()});window
 async function boot(){$('#auth-message').textContent='로그인 상태를 확인하고 있습니다…';$('#auth-retry').hidden=true;$('#login-form').hidden=true;
  try{try{const r=await fetch('/local/status',{cache:'no-store'});if(r.ok)state.mode={...await r.json(),local_mode:true}}catch{}if(state.mode.mode==='snapshot'){state.window='15m';$$('.periods button').forEach(b=>{b.disabled=b.dataset.window!=='15m'})}await restoreContext()}
  catch(e){app.hidden=true;$('#auth-screen').hidden=false;$('#auth-message').textContent='연결 확인 실패 · '+e.message;$('#auth-retry').hidden=false}}
-function renderMonitoringPaths(servers){
+function renderMonitoringPaths(servers,o){
  const root=$('.monitoring-paths');
  root.replaceChildren(E('h3','모니터링 시스템 상태'));
  const cards=E('div',undefined,'monitoring-path-grid');
  const external=E('article',undefined,'monitoring-path-card');
- external.append(E('h4','대시보드 접속'),E('p','외부 점검 지점 → 관리 웹'),
+ external.append(E('h4','관리 웹 접근'),E('p','외부 점검 지점 → 관리 웹'),
   E('strong','외부 점검 미연결'),E('small','마지막 성공 미제공'));
  const proxy=E('article',undefined,'monitoring-path-card');
  const {row,kind}=serviceState(servers,'proxy');
- proxy.append(E('h4','포털 점검 경로'),E('p','모니터링 서버 → 직원 포털'),
+ proxy.append(E('h4','포털 접근'),E('p','모니터링 서버 → 직원 포털'),
   serviceStatusBadge(kind));
  if(['normal','abnormal'].includes(kind)){
   const detail=[];
@@ -519,7 +642,14 @@ function renderMonitoringPaths(servers){
  }
  proxy.append(E('small','최근 점검 '+(row?.last_checked_at?date(row.last_checked_at)+' (KST)':'미확인')));
  if(kind!=='normal')proxy.append(E('small','마지막 성공 시각 미제공'));
- cards.append(external,proxy);root.append(cards);
+ const processing=E('article',undefined,'monitoring-path-card');
+ processing.append(E('h4','사건·알림 처리'),E('p','Worker · Slack'),E('strong','처리 상태 미수집'));
+ const telemetry=E('article',undefined,'monitoring-path-card');
+ const targets=o?.targets?.status==='ok'?o.targets.items:null;
+ const logsOK=['portal-api','portal-nginx'].every(key=>o?.logs?.[key]?.status==='ok');
+ telemetry.append(E('h4','메트릭·로그'),E('p',targets?'Prometheus 수집 '+targets.filter(t=>t.up===true).length+'/'+targets.length:'Prometheus 수집 미확인'),
+  E('p',logsOK?'Loki 조회 성공':'Loki 조회 미확인'));
+ cards.append(external,processing,proxy,telemetry);root.append(cards);
 }
 
 function renderCollectorPreview(o){
@@ -533,7 +663,7 @@ function renderCollectorPreview(o){
  head.append(header);
  const add=(cells)=>{const row=E('tr');for(const value of cells)row.append(E('td',value));body.append(row)};
  if(o?.targets?.status==='ok'){
-  for(const t of o.targets.items)add([t.job,t.job==='ec2-node'?'호스트 자원':targetLabel(t),
+  for(const t of o.targets.items)add([t.job,targetLabel(t,o),
    t.up===true?'수집 성공':t.up===false?'수집 실패':'미확인','미제공']);
   if(!o.targets.items.length)add(['Prometheus','수집 대상','대상 없음','미제공']);
  }else add(['Prometheus','수집 대상','조회 불가','미제공']);

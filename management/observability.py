@@ -8,6 +8,9 @@ WINDOWS={'15m':(900,30),'1h':(3600,30),'6h':(21600,120),'24h':(86400,300)}
 MAX_POINTS=300
 NODE_SOURCE_QUERY='max by (instance) (timestamp(node_memory_MemTotal_bytes{job="ec2-node"}))'
 
+# Return the status and its original sample time in one Prometheus evaluation.
+SCRAPE_TARGET_QUERY='up or label_replace(timestamp(up), "schutz_sample_kind", "timestamp", "job", ".*")'
+
 def source_time(value):
     """Value of timestamp(metric), not instant-vector evaluation time [0]."""
     stamp=number(value)
@@ -114,6 +117,14 @@ class Observer:
                 response.raise_for_status(); data=response.json()
                 if data.get('status')!='success': raise ValueError('QUERY_FAILED')
                 return data['data']['result']
+        async def scrape_metadata():
+            async with asyncio.timeout(4):
+                response=await client.get(self.settings.prometheus_url.rstrip('/')+'/api/v1/targets',params={'state':'active'})
+                response.raise_for_status()
+                data=response.json()
+                if data.get('status')!='success': raise ValueError('QUERY_FAILED')
+                return data['data']['activeTargets']
+
         async def logs(service):
             async with asyncio.timeout(4):
                 response=await client.get(self.settings.loki_url.rstrip('/')+'/loki/api/v1/query_range',params={'query':'{service="'+service+'"}','start':int((live_end-300)*1e9),'end':int(live_end*1e9),'limit':20,'direction':'backward'})
@@ -139,7 +150,8 @@ class Observer:
         tasks.update({'detail_'+key:prom(expr,True) for key,expr in DETAIL_PROM.items()})
         tasks.update({'detail_'+key:loki_metric(expr) for key,expr in DETAIL_LOKI.items()})
         tasks['firing_alerts']=prom('ALERTS{alertstate="firing"}',current=True)
-        tasks['scrape_targets']=prom('up',current=True)
+        tasks['scrape_targets']=prom(SCRAPE_TARGET_QUERY,current=True)
+        tasks['scrape_metadata']=scrape_metadata()
         results=await asyncio.gather(*tasks.values(),return_exceptions=True); data=dict(zip(tasks,results))
         def fresh(stamp):
             value=number(stamp);return value is not None and -5<=end-value<=60
@@ -186,7 +198,19 @@ class Observer:
         metric_status={key:'unavailable' if isinstance(data[key],Exception) else 'ok' if data[key] else 'no_data' for key in RESOURCE}
         if resource_status!='unavailable' and (metadata_status!='ok' or (nodes and any(v!='ok' for v in metric_status.values()))):
             resource_status='partial'
-        hosts=host_inventory(nodes,data['scrape_targets'],isinstance(source,Exception))
+        targets=data['scrape_targets']
+        sample_times={}
+        if not isinstance(targets,Exception):
+            status_rows=[]
+            for row in targets:
+                labels=row.get('metric',{})
+                if labels.get('schutz_sample_kind')=='timestamp':
+                    key=(labels.get('job'),labels.get('instance'))
+                    sample_times[key]=number(row['value'][1]) if key not in sample_times else None
+                else:
+                    status_rows.append(row)
+            targets=status_rows
+        hosts=host_inventory(nodes,targets,isinstance(source,Exception))
         def series(key,label):
             rows=data['detail_'+key]
             if isinstance(rows,Exception): return {'status':'unavailable','items':[]}
@@ -211,11 +235,41 @@ class Observer:
                 name=labels.get('alertname','')
                 if not re.fullmatch(r'[A-Za-z0-9_]{1,80}',name): continue
                 alert_rows.append({'name':name,'severity':labels.get('severity','')[:30]})
-        targets=data['scrape_targets'];target_rows=[]
+        target_rows=[]
+        metadata={}
+        if isinstance(data['scrape_metadata'],list):
+            for target in data['scrape_metadata']:
+                labels=target.get('labels',{})
+                key=(labels.get('job'),labels.get('instance'))
+                metadata[key]=target if key not in metadata else None
         if not isinstance(targets,Exception):
             for row in targets[:30]:
                 labels=row.get('metric',{})
                 job=labels.get('job','')
                 if job not in VISIBLE_JOBS: continue
-                target_rows.append({'job':job,'instance':labels.get('instance','')[:120],'up':number(row['value'][1])==1})
+                instance=labels.get('instance','')
+                up=number(row['value'][1])==1
+                result={'job':job,'instance':instance[:120],'up':up}
+                key=(job,instance)
+                detail=metadata.get(key)
+                sample_at=sample_times.get(key)
+                if detail and sample_at is not None and detail.get('health')==('up' if up else 'down'):
+                    try:
+                        at=datetime.fromisoformat(detail['lastScrape'])
+                        if at.tzinfo and at.year>1970:
+                            # Prometheus stores sample times at millisecond precision.
+                            scrape_at=at.replace(microsecond=at.microsecond//1000*1000)
+                            if scrape_at.timestamp()==sample_at:
+                                result['last_scrape_at']=at.isoformat()
+                    except (KeyError, TypeError, ValueError, OverflowError, OSError):
+                        pass
+                    if not up and 'last_scrape_at' in result:
+                        error=str(detail.get('lastError','')).lower()
+                        if 'timeout' in error or 'deadline exceeded' in error:
+                            result['failure_reason']='연결 시간 초과'
+                        elif 'connection refused' in error:
+                            result['failure_reason']='연결 거부'
+                        elif match:=re.search(r'http status (\d{3})\b',error):
+                            result['failure_reason']='HTTP '+match[1]
+                target_rows.append(result)
         return {'as_of':datetime.fromtimestamp(end,timezone.utc).isoformat(),'current_as_of':datetime.fromtimestamp(live_end,timezone.utc).isoformat(),'historical':window=='custom','window_minutes':seconds//60,'window':window,'step_seconds':step,'range_start':datetime.fromtimestamp(start,timezone.utc).isoformat(),'metrics':metrics,'details':details,'alerts':{'status':'unavailable' if isinstance(alerts,Exception) else 'ok','items':alert_rows},'targets':{'status':'unavailable' if isinstance(targets,Exception) else 'ok','items':target_rows},'resources':{'status':resource_status,'source_status':'unavailable' if isinstance(source,Exception) else 'ok' if nodes else 'no_data','metadata_status':metadata_status,'metric_status':metric_status,'items':hosts},'logs':{service:{'status':'unavailable' if isinstance(data[service],Exception) else 'ok','items':[] if isinstance(data[service],Exception) else data[service]} for service in ['portal-api','portal-nginx']}}

@@ -1,8 +1,9 @@
 import asyncio
 import unittest
 from types import SimpleNamespace
+from datetime import datetime
 
-from management.observability import Observer, RESOURCE, WINDOWS, point_summary, custom_bounds
+from management.observability import Observer, RESOURCE, SCRAPE_TARGET_QUERY, WINDOWS, point_summary, custom_bounds
 from unittest.mock import AsyncMock, MagicMock, patch
 
 
@@ -38,7 +39,7 @@ class Client:
         elif query == 'ALERTS{alertstate="firing"}':
             result = [{"metric": {"alertname": "PortalProbeFailed", "severity": "critical",
                                    "alertstate": "firing"}, "value": [1000, "1"]}]
-        elif query == "up":
+        elif query == SCRAPE_TARGET_QUERY:
             result = [{"metric": {"job": "ec2-node", "instance": "service:9100"}, "value": [1000, "1"]},
                       {"metric": {"job": "private-job", "instance": "secret"}, "value": [1000, "0"]}]
         elif "start" in params:
@@ -60,6 +61,46 @@ class ObservabilityParityTests(unittest.IsolatedAsyncioTestCase):
                          {"/health", "other"})
         self.assertEqual(snapshot["alerts"]["items"][0]["name"], "PortalProbeFailed")
         self.assertEqual([item["job"] for item in snapshot["targets"]["items"]], ["ec2-node"])
+
+    async def test_scrape_metadata_is_matched_without_exposing_raw_error(self):
+        class ScrapeTransition(Client):
+            def __init__(self, up, health, last_scrape):
+                super().__init__()
+                self.up, self.health, self.last_scrape = up, health, last_scrape
+
+            async def get(self, url, params):
+                metric = {"job": "ec2-node", "instance": "service:9100"}
+                if url.endswith("/targets"):
+                    return Response({"status": "success", "data": {"activeTargets": [
+                        {"labels": metric, "health": self.health, "lastScrape": self.last_scrape,
+                         "lastError": "Get internal-address: context deadline exceeded"},
+                    ]}})
+                if params["query"] == SCRAPE_TARGET_QUERY:
+                    return Response({"status": "success", "data": {"result": [
+                        {"metric": metric, "value": [1000, str(self.up)]},
+                        {"metric": {**metric, "schutz_sample_kind": "timestamp"},
+                         "value": [1000, str(datetime.fromisoformat("2026-11-05T15:21:07.123+00:00").timestamp())]},
+                    ]}})
+                return await super().get(url, params)
+
+        matching = "2026-11-05T15:21:07.123456Z"
+        newer = "2026-11-05T15:21:08.123456Z"
+        cases = [
+            ("matching failure", 0, "down", matching, True),
+            ("matching success", 1, "up", matching, True),
+            ("success to failure", 1, "down", newer, False),
+            ("failure to success", 0, "up", newer, False),
+            ("newer failure with same health", 0, "down", newer, False),
+            ("conflicting health at same time", 1, "down", matching, False),
+        ]
+        for label, up, health, last_scrape, matches in cases:
+            with self.subTest(label=label):
+                client = ScrapeTransition(up, health, last_scrape)
+                row, = (await self.observer.collect(client, end=1000))["targets"]["items"]
+                self.assertEqual(row["up"], bool(up))
+                self.assertEqual("last_scrape_at" in row, matches)
+                self.assertEqual(row.get("failure_reason"), "연결 시간 초과" if matches and not up else None)
+                self.assertNotIn("internal-address", str(row))
 
     async def test_one_failed_query_does_not_hide_other_panels(self):
         snapshot = await self.observer.collect(Client(fail_proxy=True), end=1000)
@@ -171,8 +212,8 @@ class CustomRangeTests(unittest.IsolatedAsyncioTestCase):
             if "step" in p:
                 self.assertEqual(p["end"],current-3600)
                 self.assertLessEqual(int((p["end"]-p["start"])//p["step"])+1,300)
-            if p["query"] in ['up','ALERTS{alertstate="firing"}']: self.assertEqual(p["time"],current)
-            if p["query"]=='{service="portal-api"}': self.assertEqual(p["end"],int(current*1e9))
+            if p.get("query") in [SCRAPE_TARGET_QUERY,'ALERTS{alertstate="firing"}']: self.assertEqual(p["time"],current)
+            if p.get("query")=='{service="portal-api"}': self.assertEqual(p["end"],int(current*1e9))
 
     async def test_custom_cache_is_bounded_and_distinguishes_ranges(self):
         from datetime import datetime
