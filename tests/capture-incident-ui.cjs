@@ -42,7 +42,8 @@ const server=http.createServer((req,res)=>{const url=new URL(req.url,'http://loc
   const overflow=await page.locator('#detail').evaluate(e=>({width:e.clientWidth,scroll:e.scrollWidth}));assert(overflow.scroll<=overflow.width+1,prefix+' 상세 가로 잘림');
   await page.screenshot({path:path.join(out,prefix+'-02-detail-top.png')});
   for(const selector of ['.context-history','.incident-ai-card','.incident-slack-card','.incident-evidence-panel','.incident-action-section','.incident-closure-section']){const el=page.locator(selector);await el.scrollIntoViewIfNeeded();await el.screenshot({path:path.join(out,prefix+'-'+selector.slice(1)+'.png')});}
-  assert.equal(await page.locator('.slack-delivery-row').count(),3);assert.equal(await page.getByLabel('전체 사건 ID').inputValue(),id);
+  assert.equal(await page.locator('.slack-delivery-row').count(),4);
+  for(const title of ['최초 경보 알림','AI 분석 완료 알림','복구 알림','사건 종료 알림'])assert(await page.locator('.incident-slack-card').getByText(title,{exact:true}).isVisible());assert.equal(await page.getByLabel('전체 사건 ID').inputValue(),id);
   const buttons=await page.locator('.incident-action-section form>button,.incident-closure-section form>button,.draft-panel>button').evaluateAll(es=>es.filter(e=>e.getClientRects().length).map(e=>({text:e.textContent,height:e.getBoundingClientRect().height,x:e.getBoundingClientRect().x})));
   assert(buttons.every(b=>b.height>=44));const save=buttons.find(b=>b.text==='조치 기록 저장'),close=buttons.find(b=>b.text==='사건 종료');assert(Math.abs(save.x-close.x)<2,prefix+' 저장·종료 정렬');
   checks.push(prefix+'px: 목록 9열·요약 4개, 표/상세 가로 잘림 없음, 닫기 단일 노출, 상단 안내 여백 축소, 버튼 44px·정렬 통과');
