@@ -8,7 +8,7 @@
     const parsed=Date.parse(value);return Number.isFinite(parsed)?parsed:null;
   }
   function source(row){
-    return {check:'기능 점검',login:'로그인 이벤트',prometheus:'Prometheus 경보',historical_context:'과거 사건'}[row.kind]||'입력 근거';
+    return {check:'기능 점검',login:'로그인 이벤트',security:'보안 접근 거부',prometheus:'Prometheus 경보',historical_context:'과거 사건'}[row.kind]||'입력 근거';
   }
   function observation(row){
     const p=object(row.payload)?row.payload:{};
@@ -20,7 +20,7 @@
       if(Number.isFinite(p.duration_ms))values.push('응답 '+p.duration_ms+' ms');
       return values.join(' · ')||'상태 값 미제공';
     }
-    if(row.kind==='login')return typeof p.event_type==='string'?p.event_type:'로그인 이벤트';
+    if(row.kind==='login'||row.kind==='security')return typeof p.event_type==='string'?p.event_type:'로그인 이벤트';
     return '별도 입력 근거 · 원문 확인';
   }
   function build(incident,job){
@@ -46,6 +46,7 @@
     const sourceRows=Array.isArray(incident.evidence)&&incident.evidence.length?incident.evidence:currentRows;
     const failures=sourceRows.filter(row=>{
       const p=object(row?.payload)?row.payload:{};
+      if(['unauthorized_read','unauthorized_write'].includes(incident.rule_id))return row.kind==='security'&&['authentication_required','authorization_denied'].includes(p.event_type);
       if(incident.rule_id==='login_failures')return row.kind==='login'&&p.event_type==='login_failed';
       return row?.kind==='check'&&((Number.isFinite(p.status_code)&&p.status_code>=500&&p.status_code<=599)||(p.status_code===0&&p.probe_success===false));
     }).map(row=>timestamp(row.occurred_at)).filter(value=>value!==null).sort((a,b)=>a-b);

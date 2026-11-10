@@ -11,6 +11,7 @@
   };
   const rules = {
     availability_failure: '가용성 실패', response_delay: '응답 지연',
+    unauthorized_read: '비인가 정보 조회 시도', unauthorized_write: '비인가 데이터 변경 시도',
     login_failures: '반복 로그인 실패', notification_delivery_test: '알림 전달 시험',
     monitoring_target_down: '수집 대상 연결 실패', portal_telemetry_missing: '앱 메트릭 누락',
     portal_high_error_rate: '5xx 비율 증가'
@@ -39,7 +40,8 @@
     const blockers = data.closure.reasons.filter(r => !['ACTION_REQUIRED', 'TEST_STOP_REQUIRED'].includes(r));
     // A closed incident has no current closure checks; never infer its current recovery.
     const recovered = data.status !== 'closed' && blockers.length === 0;
-    const security = data.rule_id === 'login_failures';
+    const access = ['unauthorized_read','unauthorized_write'].includes(data.rule_id);
+    const security = data.rule_id === 'login_failures' || access;
     const title = (data.synthetic ? '[모의] ' : '') + bounded(data.target_id) + ' ' +
       (rules[data.rule_id] || '이상 탐지') + ' 사건';
     let recovery;
@@ -47,6 +49,7 @@
     else if (!recovered) recovery = '복구 조건이 아직 충족되지 않았습니다. ' + blockers.map(r => recoveryMessages[r] || '추가 복구 조건 확인이 필요합니다.').join(' ');
     else if (data.rule_id === 'notification_delivery_test' && data.synthetic) recovery = '모의 알림 전달 시험의 처리 성공 조건을 확인했습니다. 실제 장애 복구를 의미하지 않으며 시험 종료와 알림 수신은 담당자가 확인해야 합니다.';
     else if (data.monitoring) recovery = '현재 사건의 Prometheus 복구 조건을 확인했습니다. 사건 종료는 담당자의 조치 기록과 확인이 필요합니다.';
+    else if (access) recovery = '로그 수집 갱신과 추가 접근 거부 없이 60초 경과 조건을 확인했습니다. 시험 중단과 보호 정보 미노출·데이터 미변경은 담당자의 별도 증거 확인이 필요합니다. 추가 차단 완료를 뜻하지 않습니다.';
     else if (security) recovery = '로그 수집 갱신과 추가 로그인 실패 없이 60초 경과 조건을 확인했습니다. 시험 입력 중지 여부는 담당자의 확인이 필요합니다.';
     else recovery = '정상 점검 2회 이상 연속 및 최근 점검 데이터 갱신 조건 충족을 확인했습니다.';
     const delivery = [jobText(data.jobs, 'slack', '최초 알림'), jobText(data.jobs, 'ai', 'AI 분석'), jobText(data.jobs, 'slack_ai', 'AI 후속 알림')].join(' ');
@@ -54,7 +57,7 @@
     return {
       action: (title + '의 모니터링 결과를 검토했습니다. ' + recovery + ' ' + delivery).slice(0, 1000),
       resolution: (ready
-        ? title + '의 복구 조건과 저장된 조치 기록을 검토했습니다. ' + recovery + ' ' + delivery + ' 위 근거를 검토하여 사건을 종료합니다.'
+        ? title + (access ? '의 종료 조건과 저장된 조치 기록을 검토했습니다. ' : '의 복구 조건과 저장된 조치 기록을 검토했습니다. ') + recovery + ' ' + delivery + ' 위 근거를 검토하여 사건을 종료합니다.'
         : '종료 조건이 아직 충족되지 않아 종료 근거를 확정할 수 없습니다. ' + recovery).slice(0, 1000),
       recovered, ready,
       note: '조회 시점의 이력으로 만든 초안입니다. 실제 수행한 조치를 확인·보완해주세요. Slack 전송 성공은 사람의 수신 확인을 의미하지 않습니다.'
