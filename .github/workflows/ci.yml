@@ -119,7 +119,7 @@ jobs:
           docker run --rm --network none \
             -v "$PWD/tests:/tests:ro" \
             schutz-management-web:ci \
-            python -m unittest discover -s /tests -p test_session_control.py
+            python -m unittest discover -s /tests -p 'test_session_control*.py'
 
   publish-ecr:
     name: Publish image to ECR

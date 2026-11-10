@@ -1,7 +1,8 @@
 """Explicit operator action, durable intent and authenticated service receipt."""
 import json
 import time
-import uuid
+import ssl
+from pathlib import Path
 from urllib.parse import urlsplit
 from datetime import datetime, timezone
 import httpx
@@ -52,10 +53,21 @@ def detail(db, incident, settings):
 def execute(settings, intent, transport=None):
     # Caller supplies only a stored, authorized intent, never a browser URL/account.
     if not configured(settings): return {'status':'failed','error_code':'CONTROL_DISABLED'}
+    # A dedicated public certificate/CA bundle; never disable chain or address verification.
+    verify = True
+    ca_file = getattr(settings, 'session_control_ca_file', '')
+    if ca_file:
+        try:
+            path = Path(ca_file)
+            if not path.is_absolute() or not path.is_file():
+                raise ValueError('invalid trust path')
+            verify = ssl.create_default_context(cafile=str(path))
+        except (OSError, ssl.SSLError, ValueError):
+            return {'status':'failed','error_code':'CONTROL_TLS_CONFIG'}
     payload={k:intent[k] for k in ('operation_id','incident_id','account_ref','test_run_id','actor_id')}
     payload['exp']=int(time.time())+30
     try:
-        with httpx.Client(timeout=5,follow_redirects=False,trust_env=False,transport=transport) as client:
+        with httpx.Client(timeout=5,follow_redirects=False,trust_env=False,verify=verify,transport=transport) as client:
             response=client.post(settings.session_control_url,
                 headers={'X-Session-Control':sign(payload,settings.session_control_secret,PURPOSE)},json={})
         if response.status_code!=200:

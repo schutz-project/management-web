@@ -28,3 +28,4 @@ class Settings(BaseSettings):
     session_control_enabled: bool = False
     session_control_secret: str = ''
     session_control_url: str = ''
+    session_control_ca_file: str = ''
