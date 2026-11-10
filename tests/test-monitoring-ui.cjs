@@ -245,3 +245,34 @@ test('목록이 필터로 비어도 실제 경보는 종에 표시하고 열린 
  assert.match(a.location.hash,/status=open/);
  assert.doesNotMatch(a.location.hash,/[&](q|state)=/);
 });
+
+test('사건 집계는 운영을 기본으로 하고 모의·전체를 조회 요청에 전달한다',async()=>{
+ const a=boot();await settle();
+ assert(a.calls.some(c=>c.path.includes('incident-overview?')&&c.path.includes('scope=operational')));
+ const select=a.doc.querySelector('.incident-scope-select');assert(select);
+ select.value='synthetic';select.dispatch('change');await settle();
+ assert(a.calls.some(c=>c.path.includes('incident-overview?')&&c.path.includes('scope=synthetic')));
+ select.value='all';select.dispatch('change');await settle();
+ assert(a.calls.some(c=>c.path.includes('incident-overview?')&&c.path.includes('scope=all')));
+ assert.equal(a.calls.filter(c=>c.opts.method==='POST').length,0);
+});
+test('보안 사건은 복구 해당 없음과 사건 종료 알림을 별도로 표시한다',async()=>{
+ const a=boot({writes:true,incidentStatus:'in_progress',detail:{rule_id:'unauthorized_write',closure:{eligible:true,reasons:[],test_stop_confirmation_required:true}}});await settle();
+ a.doc.querySelector('#incidents tbody tr').dispatch('click');await settle();
+ const text=a.doc.querySelector('#detail-body').textContent;
+ assert.match(text,/비인가 데이터 변경 시도/);assert.match(text,/해당 없음/);assert.match(text,/사건 종료 알림/);
+ assert.match(text,/자동 증명되지는 않습니다/);assert(a.doc.querySelector('#test-stopped'));
+});
+test('API 연결 전에도 로컬 디자인 시안 문구를 운영 근거처럼 표시하지 않는다',async()=>{
+ const a=boot({production:true});await settle();
+ assert(!a.doc.textContent.includes('로컬 디자인 시안 · 실제 운영 데이터 아님'));
+});
+
+test('보안 사건 조치 초안은 정상 점검이나 추가 차단 완료를 꾸며내지 않는다',()=>{
+ const drafts=require('../static/schutz-ui/drafts.js');
+ const result=drafts.buildDraft({id:'unit',target_id:'sec:unit',rule_id:'unauthorized_write',synthetic:true,status:'in_progress',jobs:[],closure:{eligible:true,reasons:[]}});
+ assert.match(result.resolution,/종료 조건/);
+ assert.match(result.action,/별도 증거 확인/);
+ assert.match(result.action,/추가 차단 완료를 뜻하지 않습니다/);
+ assert.doesNotMatch(result.action,/정상 점검 2회/);
+});

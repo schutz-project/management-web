@@ -1,0 +1,11 @@
+# Candidate overlay. Keep disabled until internal TLS and DB checks are approved.
+services:
+  management-web:
+    env_file:
+      - .session-control.env
+    environment:
+      SESSION_CONTROL_ENABLED: "false"
+      SESSION_CONTROL_URL: "https://10.20.10.62:18443/internal/security/revoke-test-sessions"
+      SESSION_CONTROL_CA_FILE: /run/schutz-control-trust/service-control.crt
+    volumes:
+      - /opt/schutz-monitoring/control-trust:/run/schutz-control-trust:ro

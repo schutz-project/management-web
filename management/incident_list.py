@@ -5,6 +5,7 @@ from management.domain import utc
 
 RULE_NAMES={
     'availability_failure':'가용성 장애','response_delay':'응답 지연',
+    'unauthorized_read':'비인가 정보 조회 시도','unauthorized_write':'비인가 데이터 변경 시도',
     'login_failures':'반복 로그인 실패','monitoring_target_down':'수집 대상 연결 실패',
     'portal_telemetry_missing':'앱 메트릭 누락','portal_high_error_rate':'5xx 비율 증가',
     'notification_delivery_test':'알림 전달 시험',
@@ -37,7 +38,7 @@ def query_conditions(q,severity):
 
 def job_summaries(db,incident_ids):
     if not incident_ids:return {}
-    jobs=db.scalars(select(Job).where(Job.incident_id.in_(incident_ids),Job.kind.in_(['ai','slack','slack_ai','slack_recovery']))).all()
+    jobs=db.scalars(select(Job).where(Job.incident_id.in_(incident_ids),Job.kind.in_(['ai','slack','slack_ai','slack_recovery','slack_closed']))).all()
     times=dict(db.execute(select(Attempt.job_id,func.max(Attempt.started_at)).where(
         Attempt.job_id.in_([j.id for j in jobs])).group_by(Attempt.job_id)).all()) if jobs else {}
     result={}

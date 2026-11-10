@@ -9,7 +9,7 @@ from management.models import Target, Incident, Evidence, IncidentEvidence, Acti
 from management.domain import utc, closure_reasons, change, target
 
 def stamp(v): return utc(v).isoformat().replace('+00:00','Z') if v else None
-def create_app(settings=None,engine=None,metric_readers=None,observer=None):
+def create_app(settings=None,engine=None,metric_readers=None,observer=None,session_control_transport=None):
     app=portal_app(settings,engine,metric_readers)
     app.title='Schutz 사건 관리'
     # The management service has its own DB; do not expose portal business routes.
@@ -89,8 +89,11 @@ def create_app(settings=None,engine=None,metric_readers=None,observer=None):
             counts={k:db.scalar(select(func.count()).select_from(Incident).where(Incident.status==k)) for k in ['new','accepted','in_progress','closed']}
             return {'as_of':stamp(current),'servers':servers,'incident_counts':counts}
     @app.get('/api/dashboard/incident-overview')
-    def incident_overview(request:Request,window:str='15m',start:str|None=None,end:str|None=None):
+    def incident_overview(request:Request,window:str='15m',start:str|None=None,end:str|None=None,scope:str='operational'):
         from management.observability import WINDOWS, custom_bounds
+        if scope not in {'operational','synthetic','all'}: invalid('scope')
+        from sqlalchemy import true
+        scope_condition = Incident.synthetic.is_(False) if scope=='operational' else Incident.synthetic.is_(True) if scope=='synthetic' else true()
         current=now().timestamp()
         if window=='custom':
             try:
@@ -106,7 +109,7 @@ def create_app(settings=None,engine=None,metric_readers=None,observer=None):
         with factory.begin() as db:
             admin(request,db)
             rows=db.execute(select(Incident.detected_at,Incident.closed_at,Incident.rule_id).where(
-                Incident.synthetic.is_(False),
+                scope_condition,
                 or_((Incident.detected_at>=lower)&(Incident.detected_at<=upper),
                     (Incident.closed_at>=lower)&(Incident.closed_at<=upper))))
             step=(last-first)/12
@@ -126,7 +129,7 @@ def create_app(settings=None,engine=None,metric_readers=None,observer=None):
                               'monitoring_target_down':'collection','portal_telemetry_missing':'collection'}.get(rule,'other')
                         types[kind]+=1
             timeline_query=select(Incident).where(
-                Incident.synthetic.is_(False),Incident.detected_at<=upper,
+                scope_condition,Incident.detected_at<=upper,
                 or_(Incident.closed_at.is_(None),Incident.closed_at>=lower),
             ).order_by(Incident.detected_at.desc(),Incident.id).limit(21)
             incidents=list(db.scalars(timeline_query))
@@ -161,10 +164,10 @@ def create_app(settings=None,engine=None,metric_readers=None,observer=None):
                 closed=utc(incident.closed_at)
                 detected=utc(incident.detected_at)
                 recovery=verified.get(incident.id)
-                timeline.append({'id':incident.id,'target_id':incident.target_id,
+                timeline.append({'id':incident.id,'target_id':incident.target_id,'synthetic':incident.synthetic,
                                  'rule_id':incident.rule_id,'detected_at':stamp(detected),
                                  'recovery_checked_at':stamp(recovery),'closed_at':stamp(closed)})
-            return {'start':stamp(lower),'end':stamp(upper),'buckets':buckets,'types':types,
+            return {'scope':scope,'start':stamp(lower),'end':stamp(upper),'buckets':buckets,'types':types,
                     'timeline':timeline,'timeline_truncated':len(incidents)>20}
     @app.get('/api/observability')
     async def observability(request:Request,window:str='15m',start:str|None=None,end:str|None=None):
@@ -198,10 +201,65 @@ def create_app(settings=None,engine=None,metric_readers=None,observer=None):
                 jobs.append({'kind':job.kind,'status':job.status,'mode':job.mode,'attempts':job.attempts,'model':job.model,'prompt_version':job.prompt_version,'result':job.result,'error_code':job.error_code,'input_evidence':job.input_evidence,'history':[{'number':a.number,'outcome':a.outcome,'error_code':a.error_code,'started_at':stamp(a.started_at),'finished_at':stamp(a.finished_at)} for a in attempts]})
             actions=db.scalars(select(Action).where(Action.incident_id==id).order_by(Action.created_at,Action.id)).all()
             reasons=closure_reasons(db,row,test_stopped=True) if row.status!='closed' else []
+            from management.session_control import operation as control_operation
+            pending_control=control_operation(db,id)
+            if pending_control and json.loads(pending_control.content)['status'] in {'pending','unknown'}:
+                reasons=sorted(set(reasons+['CONTROL_RESULT_UNCONFIRMED']))
             from management.incident_list import severity_expression
             severity=db.scalar(select(severity_expression()).where(Incident.id==id))
-            return {**item(row,db),'severity':severity,'severity_source':'stored_prometheus_evidence' if severity else None,'evidence':[{'id':e.id,'kind':e.kind,'occurred_at':stamp(e.occurred_at),'payload':e.payload} for e in evidence],'jobs':jobs,'actions':[{'id':a.id,'kind':a.kind,'content':a.content,'actor_id':a.actor_id,'created_at':stamp(a.created_at)} for a in actions],'closure':{'eligible':not reasons,'reasons':reasons,'test_stop_confirmation_required':row.rule_id=='login_failures' or row.rule_id=='notification_delivery_test' and row.synthetic}}
+            from management.session_control import detail as control_detail
+            return {**item(row,db),'session_control':control_detail(db,row,app.state.settings),'severity':severity,'severity_source':'stored_prometheus_evidence' if severity else None,'evidence':[{'id':e.id,'kind':e.kind,'occurred_at':stamp(e.occurred_at),'payload':e.payload} for e in evidence],'jobs':jobs,'actions':[{'id':a.id,'kind':a.kind,'content':a.content,'actor_id':a.actor_id,'created_at':stamp(a.created_at)} for a in actions],'closure':{'eligible':not reasons,'reasons':reasons,'test_stop_confirmation_required':row.rule_id in {'login_failures','unauthorized_read','unauthorized_write'} or row.rule_id=='notification_delivery_test' and row.synthetic}}
     def conflict(): raise ApiError(409,'STATE_CONFLICT','사건 상태가 변경되었습니다. 새로고침해 주세요.')
+    @app.post('/api/incidents/{id}/revoke-test-sessions')
+    def revoke_sessions(id:str,request:Request):
+        from management import session_control as control
+        with factory.begin() as db:
+            user=admin(request,db,True); data=body(request)
+            if data!={'confirm_account':'test_user'}: invalid('confirm_account')
+            row=load(db,id)
+            if row.status not in {'accepted','in_progress'}: conflict()
+            if not control.eligible(db,row):
+                raise ApiError(409,'TRIAL_WRITE_INCIDENT_REQUIRED','시험 계정의 권한 거부 사건만 실행할 수 있습니다.')
+            record=control.operation(db,id)
+            is_retry=record is not None
+            if record is None:
+                import uuid
+                intent={'operation_id':uuid.uuid4().hex,'incident_id':id,'account_ref':'test_user',
+                    'test_run_id':row.test_run_id,'actor_id':user.user_id,'status':'pending','attempts':[]}
+                record=Action(incident_id=id,kind='session_revoke',content=json.dumps(intent),actor_id=user.user_id)
+                db.add(record); db.flush()
+            else: intent=json.loads(record.content)
+            if intent['status']=='succeeded': return intent
+            if len(intent['attempts'])>=20:
+                raise ApiError(409,'CONTROL_REVIEW_REQUIRED','실행 이력을 검토해 주세요.')
+            # Commit intent BEFORE any service call. Retry always reuses operation_id.
+            intent['unconfirmed_prior']=bool(intent.get('unconfirmed_prior') or is_retry and intent['status'] in {'pending','unknown'})
+            intent['status']='pending'
+            record.content=json.dumps(intent,ensure_ascii=False)
+            record_id=record.id
+        result=control.execute(app.state.settings,intent,session_control_transport)
+        if result['status']=='failed' and intent.get('unconfirmed_prior'):
+            result={**result,'status':'unknown','error_code':'CONTROL_RESULT_UNCONFIRMED'}
+        with factory.begin() as db:
+            # Serializes with other actions and closure; never overwrite confirmed success.
+            row=load(db,id); record=db.get(Action,record_id)
+            stored=json.loads(record.content)
+            if stored['status']=='succeeded': return stored
+            stored.update(result)
+            stored['unconfirmed_prior']=result['status']=='unknown'
+            stored['attempts'].append({'at':stamp(now()),'actor_id':user.user_id,
+                'status':result['status'],'error_code':result.get('error_code')})
+            record.content=json.dumps(stored,ensure_ascii=False)
+            if result['status']=='succeeded':
+                if row.status in {'accepted','in_progress'}:
+                    if not change(db,row,{'status':'in_progress'}): conflict()
+                db.add(Action(incident_id=id,kind='action',actor_id=user.user_id,
+                    content='시험 계정 test_user의 세션 폐기 서비스 확인: '+str(result['revoked_count'])+
+                    '건. 기존 세션 접근 거부·시험 객체 미변경은 별도 검증 필요. 실행 ID '+stored['operation_id']))
+            response=stored
+        from fastapi.responses import JSONResponse
+        return JSONResponse(response,status_code=200 if response['status']=='succeeded' else 202)
+
     @app.post('/api/incidents/{id}/accept')
     def accept(id:str,request:Request):
         with factory.begin() as db:
@@ -229,14 +287,19 @@ def create_app(settings=None,engine=None,metric_readers=None,observer=None):
             if not set(data)<= {'resolution','test_stopped'}: invalid('body')
             resolution=text(data,'resolution'); row=load(db,id)
             if row.status=='closed': conflict()
+            from management.session_control import operation
+            control_record=operation(db,id)
+            if control_record and json.loads(control_record.content)['status'] in {'pending','unknown'}:
+                raise ApiError(409,'CONTROL_RESULT_UNCONFIRMED','세션 폐기 실행 결과를 먼저 확인해 주세요.')
             reasons=closure_reasons(db,row,test_stopped=data.get('test_stopped') is True)
             if reasons: raise ApiError(409,'RECOVERY_NOT_CONFIRMED','복구 조건을 아직 충족하지 못했습니다.',details=reasons)
             if not change(db,row,{'status':'closed','closed_by':user.user_id,'closed_at':now(),'resolution':resolution,'open_key':None}): conflict()
             from management.alert_policy import RULE_IDS
             if row.rule_id not in RULE_IDS:
                 state=target(db,row.target_id); state.failures=0; state.slows=0
-                if row.rule_id=='login_failures': state.security_cutoff=now()
+                if row.rule_id in {'login_failures','unauthorized_read','unauthorized_write'}: state.security_cutoff=now()
             db.add(Action(incident_id=id,kind='close',content=resolution,actor_id=user.user_id))
+            db.add(Job(incident_id=id,kind='slack_closed'))
             return item(row,db)
     return app
 
