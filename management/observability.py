@@ -177,6 +177,9 @@ class Observer:
         tasks['firing_alerts']=prom('ALERTS{alertstate="firing"}',current=True)
         tasks['scrape_targets']=prom(SCRAPE_TARGET_QUERY,current=True)
         tasks['scrape_metadata']=scrape_metadata()
+        probe = 'probe_success{job=~"homepage-health|homepage-organization|community-health|community-questions"}'
+        tasks['service_probes']=prom(probe,current=True)
+        tasks['service_probe_times']=prom('timestamp('+probe+')',current=True)
         results=await asyncio.gather(*tasks.values(),return_exceptions=True); data=dict(zip(tasks,results))
         def fresh(stamp):
             value=number(stamp);return value is not None and -5<=end-value<=60
@@ -260,6 +263,20 @@ class Observer:
                 name=labels.get('alertname','')
                 if not re.fullmatch(r'[A-Za-z0-9_]{1,80}',name): continue
                 alert_rows.append({'name':name,'severity':labels.get('severity','')[:30]})
+        def probe_values(rows):
+            values={}
+            if isinstance(rows,list):
+                for row in rows:
+                    job=row['metric'].get('job')
+                    values[job]=number(row['value'][1]) if job not in values else None
+            return values
+
+        probe_states=probe_values(data['service_probes'])
+        probes={}
+        for job,stamp in probe_values(data['service_probe_times']).items():
+            value=probe_states.get(job)
+            if value in (0,1) and stamp is not None and -5<=live_end-stamp<=60:
+                probes[job]={'success':value==1,'checked_at':datetime.fromtimestamp(stamp,timezone.utc).isoformat()}
         target_rows=[]
         metadata={}
         if isinstance(data['scrape_metadata'],list):
@@ -297,4 +314,4 @@ class Observer:
                         elif match:=re.search(r'http status (\d{3})\b',error):
                             result['failure_reason']='HTTP '+match[1]
                 target_rows.append(result)
-        return {'as_of':datetime.fromtimestamp(end,timezone.utc).isoformat(),'current_as_of':datetime.fromtimestamp(live_end,timezone.utc).isoformat(),'historical':window=='custom','window_minutes':seconds//60,'window':window,'step_seconds':step,'range_start':datetime.fromtimestamp(start,timezone.utc).isoformat(),'metrics':metrics,'details':details,'alerts':{'status':'unavailable' if isinstance(alerts,Exception) else 'ok','items':alert_rows},'targets':{'status':'unavailable' if isinstance(targets,Exception) else 'ok','items':target_rows},'resources':{'status':resource_status,'source_status':'unavailable' if isinstance(source,Exception) else 'ok' if nodes else 'no_data','metadata_status':metadata_status,'metric_status':metric_status,'items':hosts},'logs':{service:{'status':'unavailable' if isinstance(data[service],Exception) else 'ok','items':[] if isinstance(data[service],Exception) else data[service]} for service in LOG_SERVICES}}
+        return {'as_of':datetime.fromtimestamp(end,timezone.utc).isoformat(),'current_as_of':datetime.fromtimestamp(live_end,timezone.utc).isoformat(),'historical':window=='custom','window_minutes':seconds//60,'window':window,'step_seconds':step,'range_start':datetime.fromtimestamp(start,timezone.utc).isoformat(),'metrics':metrics,'service_probes':probes,'details':details,'alerts':{'status':'unavailable' if isinstance(alerts,Exception) else 'ok','items':alert_rows},'targets':{'status':'unavailable' if isinstance(targets,Exception) else 'ok','items':target_rows},'resources':{'status':resource_status,'source_status':'unavailable' if isinstance(source,Exception) else 'ok' if nodes else 'no_data','metadata_status':metadata_status,'metric_status':metric_status,'items':hosts},'logs':{service:{'status':'unavailable' if isinstance(data[service],Exception) else 'ok','items':[] if isinstance(data[service],Exception) else data[service]} for service in LOG_SERVICES}}
