@@ -633,8 +633,8 @@ function showLogs(o){
  let selected=null;
  function render(){
   rows.replaceChildren();
-  for(const [service,label] of [['portal-nginx','Nginx 접근 로그'],['portal-api','FastAPI 처리 로그']]){
-   const data=o.logs?.[service],section=E('section',undefined,'detail-card phase3-log-panel'),isProxy=service==='portal-nginx';
+  for(const [service,label] of [['portal-nginx','직원 포털 A · Nginx 접근 로그'],['portal-api','직원 포털 A · FastAPI 처리 로그'],['schutz-homepage','홈페이지 B · 요청 로그'],['schutz-community','커뮤니티 C · 요청 로그']]){
+   const data=o.logs?.[service],section=E('section',undefined,'detail-card phase3-log-panel'),isProxy=service==='portal-nginx',isPortal=isProxy||service==='portal-api';
    section.append(E('h3',label));rows.append(section);
    if(data?.status!=='ok'){section.append(E('p','로그 조회 실패','read-note'));continue}
    const query=input.value.trim().toLowerCase();
@@ -644,7 +644,7 @@ function showLogs(o){
     return (!hide.checked||!check||code<200||code>=300||!Number.isFinite(code)||Boolean(f.reason_code))
      && [f.request_id,f.route,f.event_type].some(value=>String(value??'').toLowerCase().includes(query));
    });
-   if(selected?.service!==service&&selected?.id&&!list.some(({fields})=>fields.request_id===selected.id))
+   if(isPortal&&selected?.service!==service&&selected?.id&&!list.some(({fields})=>fields.request_id===selected.id))
     section.append(E('p','연결 로그 미확인 · 현재 조회 범위','read-note'));
    if(!list.length)section.append(E('p','검색 결과 없음','read-muted'));
    const header=E('div',undefined,'phase3-log-row phase3-log-head');
@@ -667,7 +667,7 @@ function showLogs(o){
      rows.querySelectorAll('summary.phase3-log-row')[summaryIndex]?.focus();
     };
     const timings=isProxy?[['전체 요청',duration],['업스트림 응답',logDuration(f.upstream_response_time,1000)],['업스트림 상태',f.upstream_status??'미수집']]
-     :[['이벤트',f.event_type??'미수집'],['앱 처리',duration],['DB 작업',logDuration(f.db_duration_ms)]];
+     :isPortal?[['이벤트',f.event_type??'미수집'],['앱 처리',duration],['DB 작업',logDuration(f.db_duration_ms)]]:[['요청 방식',f.method??'미수집']];
     const raw=E('details');raw.append(E('summary','원본 JSON'),pretty(f));
     entry.append(summary,definitionPanel('요청 상세',[['요청 ID',id||'미수집'],...timings,['실패 사유',f.reason_code??'기록 없음']]),raw);
     section.append(entry);
