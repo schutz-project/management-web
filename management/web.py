@@ -167,8 +167,14 @@ def create_app(settings=None,engine=None,metric_readers=None,observer=None,sessi
                 timeline.append({'id':incident.id,'target_id':incident.target_id,'synthetic':incident.synthetic,
                                  'rule_id':incident.rule_id,'detected_at':stamp(detected),
                                  'recovery_checked_at':stamp(recovery),'closed_at':stamp(closed)})
+            recent_detected=[]
+            if window=='custom':
+                recent=db.scalars(select(Incident).where(scope_condition,
+                    Incident.detected_at>=lower,Incident.detected_at<=upper)
+                    .order_by(Incident.detected_at.desc(),Incident.id).limit(5))
+                recent_detected=[item(incident,db) for incident in recent]
             return {'scope':scope,'start':stamp(lower),'end':stamp(upper),'buckets':buckets,'types':types,
-                    'timeline':timeline,'timeline_truncated':len(incidents)>20}
+                    'timeline':timeline,'timeline_truncated':len(incidents)>20,'recent_detected':recent_detected}
     @app.get('/api/observability')
     async def observability(request:Request,window:str='15m',start:str|None=None,end:str|None=None):
         with factory.begin() as db: admin(request,db)

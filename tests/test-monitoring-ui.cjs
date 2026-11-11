@@ -276,3 +276,21 @@ test('보안 사건 조치 초안은 정상 점검이나 추가 차단 완료를
  assert.match(result.action,/추가 차단 완료를 뜻하지 않습니다/);
  assert.doesNotMatch(result.action,/정상 점검 2회/);
 });
+
+test('사용자 지정 대시보드가 사건 집계와 목록에 같은 기간을 적용한다',async()=>{
+ const start=new Date(Date.now()-10*86400000).toISOString();
+ const end=new Date(Date.parse(start)+3600000).toISOString();
+ const query=new URLSearchParams({view:'dashboard',window:'custom',start,end,incident_scope:'synthetic'});
+ const a=boot({hash:'#'+query,overview:{recent_detected:[{
+  id:'historical-fixture',detected_at:start,rule_id:'response_delay',target_id:'database',status:'new',synthetic:true
+ }]}});
+ await settle();
+ const call=a.calls.find(c=>c.path.startsWith('/api/dashboard/incident-overview?'));
+ const params=new URLSearchParams(call.path.split('?')[1]);
+ assert.equal(params.get('start'),start);
+ assert.equal(params.get('end'),end);
+ assert.equal(params.get('scope'),'synthetic');
+ assert(!a.calls.some(c=>c.path.startsWith('/api/incidents?')));
+ assert.equal(a.doc.querySelector('#incidents .panel-head h2').textContent,'선택 기간에 발생한 사건');
+ assert.match(a.doc.querySelector('#incidents tbody').textContent,/모의.*응답 지연/);
+});
