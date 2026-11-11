@@ -69,6 +69,29 @@ RESOURCE={
 }
 FIELDS={'timestamp','occurred_at','request_id','trace_id','span_id','event_type','route','method','status','status_code','duration_ms','db_duration_ms','request_time','upstream_response_time','upstream_status','reason_code','synthetic','test_run_id'}
 ROUTES={'other','/','/health','/proxy-health','/internal/check/employee','/api/auth/context','/api/auth/login','/api/auth/logout','/api/employees','/api/notices','/api/posts','/api/posts/{post_id}','/api/dashboard','/api/observability','/api/incidents','/api/incidents/{id}','/api/incidents/{id}/accept','/api/incidents/{id}/actions','/api/incidents/{id}/close'}
+PUBLIC_LOG_ROUTES = {
+    'schutz-homepage': {'/', '/health', '/api/organization'},
+    'schutz-community': {'/', '/health', '/api/guides', '/api/questions'},
+}
+LOG_SERVICES = ('portal-api', 'portal-nginx', *PUBLIC_LOG_ROUTES)
+UVICORN_ACCESS = re.compile(
+    r'INFO:\s+\S+\s+- "(?P<method>[A-Z]+) (?P<target>/[^\s"]*) '
+    r'HTTP/\d(?:\.\d)?" (?P<status>[1-5]\d{2})(?:\s[^\r\n]*)?'
+)
+
+def public_access_log(service, raw):
+    match = UVICORN_ACCESS.fullmatch(raw.rstrip('\r\n'))
+    if not match:
+        return None
+    path = match['target'].partition('?')[0]
+    routes = PUBLIC_LOG_ROUTES[service]
+    parent, _, item = path.rpartition('/')
+    if service == 'schutz-community' and parent in {'/api/guides', '/api/questions'} and item:
+        path = parent + '/{id}'
+    elif path not in routes:
+        path = 'other'
+    return {'method': match['method'], 'route': path, 'status_code': int(match['status'])}
+
 def number(value):
     try: result=float(value)
     except (ValueError,TypeError,OverflowError): return None
@@ -135,7 +158,7 @@ class Observer:
                 rows=[]
                 for stream in data['data']['result']:
                     for stamp,raw in stream['values']:
-                        safe=safe_log(raw)
+                        safe=public_access_log(service,raw) if service in PUBLIC_LOG_ROUTES else safe_log(raw)
                         if safe is not None: rows.append({'collected_at':datetime.fromtimestamp(int(stamp)/1e9,timezone.utc).isoformat(),'fields':safe})
                 rows.sort(key=lambda row:row['collected_at'],reverse=True)
                 return rows[:20]
@@ -148,7 +171,7 @@ class Observer:
         tasks={'source':prom('max(timestamp(portal_http_requests{job="portal-otel"}))'),'node_source':prom(NODE_SOURCE_QUERY)}
         tasks.update({key:prom(expr,True) for key,expr in METRICS.items()});tasks.update({key:prom(expr) for key,expr in RESOURCE.items()})
         tasks.update({'history_'+key:prom(expr,True) for key,expr in RESOURCE.items()})
-        tasks.update({service:logs(service) for service in ['portal-api','portal-nginx']})
+        tasks.update({service:logs(service) for service in LOG_SERVICES})
         tasks.update({'detail_'+key:prom(expr,True) for key,expr in DETAIL_PROM.items()})
         tasks.update({'detail_'+key:loki_metric(expr) for key,expr in DETAIL_LOKI.items()})
         tasks['firing_alerts']=prom('ALERTS{alertstate="firing"}',current=True)
@@ -274,4 +297,4 @@ class Observer:
                         elif match:=re.search(r'http status (\d{3})\b',error):
                             result['failure_reason']='HTTP '+match[1]
                 target_rows.append(result)
-        return {'as_of':datetime.fromtimestamp(end,timezone.utc).isoformat(),'current_as_of':datetime.fromtimestamp(live_end,timezone.utc).isoformat(),'historical':window=='custom','window_minutes':seconds//60,'window':window,'step_seconds':step,'range_start':datetime.fromtimestamp(start,timezone.utc).isoformat(),'metrics':metrics,'details':details,'alerts':{'status':'unavailable' if isinstance(alerts,Exception) else 'ok','items':alert_rows},'targets':{'status':'unavailable' if isinstance(targets,Exception) else 'ok','items':target_rows},'resources':{'status':resource_status,'source_status':'unavailable' if isinstance(source,Exception) else 'ok' if nodes else 'no_data','metadata_status':metadata_status,'metric_status':metric_status,'items':hosts},'logs':{service:{'status':'unavailable' if isinstance(data[service],Exception) else 'ok','items':[] if isinstance(data[service],Exception) else data[service]} for service in ['portal-api','portal-nginx']}}
+        return {'as_of':datetime.fromtimestamp(end,timezone.utc).isoformat(),'current_as_of':datetime.fromtimestamp(live_end,timezone.utc).isoformat(),'historical':window=='custom','window_minutes':seconds//60,'window':window,'step_seconds':step,'range_start':datetime.fromtimestamp(start,timezone.utc).isoformat(),'metrics':metrics,'details':details,'alerts':{'status':'unavailable' if isinstance(alerts,Exception) else 'ok','items':alert_rows},'targets':{'status':'unavailable' if isinstance(targets,Exception) else 'ok','items':target_rows},'resources':{'status':resource_status,'source_status':'unavailable' if isinstance(source,Exception) else 'ok' if nodes else 'no_data','metadata_status':metadata_status,'metric_status':metric_status,'items':hosts},'logs':{service:{'status':'unavailable' if isinstance(data[service],Exception) else 'ok','items':[] if isinstance(data[service],Exception) else data[service]} for service in LOG_SERVICES}}
