@@ -277,7 +277,7 @@ function renderResources(o){
   root.append(section);
  }
 }
-const roles={'ec2-node':'호스트 지표 (Alloy)','portal-otel':'앱 지표 (Alloy)',prometheus:'자체 상태','portal-db-health':'직원 조회 점검','homepage-health':'홈페이지 HTTP 점검','homepage-organization':'조직도 API 점검'};
+const roles={'ec2-node':'호스트 지표 (Alloy)','portal-otel':'앱 지표 (Alloy)',prometheus:'자체 상태','portal-db-health':'직원 조회 점검','homepage-health':'홈페이지 HTTP 점검','homepage-organization':'조직도 API 점검','community-health':'커뮤니티 HTTP 점검','community-questions':'질문 목록 API 점검'};
 function renderIncidents(tbody,rows,failed=false){tbody.replaceChildren();$('#incidents thead').innerHTML='<tr><th>발생 (KST)</th><th>구분</th><th>유형</th><th>대상</th><th>상태</th><th>AI 분석</th></tr>';
  if(!rows.length){const tr=E('tr'),td=E('td',failed?'사건 조회 실패':'사건이 없습니다.');td.colSpan=6;tr.append(td);tbody.append(tr)}
  for(const row of rows){const tr=E('tr');[date(row.detected_at),row.synthetic?'모의':'운영',name(row.rule_id),(row.target_display||name(row.target_id)),name(row.status),'상세 확인'].forEach(t=>tr.append(E('td',t)));wire(tr,()=>openIncident(row.id));tbody.append(tr)}}
@@ -592,7 +592,7 @@ function targetLabel(t,o){
   const role=matches.length===1?matches[0].server_role:null;
   return {service:'서비스 서버 자원',monitoring:'모니터링 서버 자원'}[role]||'역할 미확인 서버 자원';
  }
- return {'portal-otel':'앱 서비스 지표',prometheus:'메트릭 저장소','portal-db-health':'직원 조회 점검','homepage-health':'회사 홈페이지 B · 헬스 체크','homepage-organization':'회사 홈페이지 B · 조직도 조회'}[t.job]||t.job;
+ return {'portal-otel':'앱 서비스 지표',prometheus:'메트릭 저장소','portal-db-health':'직원 조회 점검','homepage-health':'회사 홈페이지 B · 헬스 체크','homepage-organization':'회사 홈페이지 B · 조직도 조회','community-health':'커뮤니티 C · 헬스 체크','community-questions':'커뮤니티 C · 질문 목록 조회'}[t.job]||t.job;
 }
 function summaryCard(label,value){const card=E('article',undefined,'read-stat');card.append(E('p',label),E('strong',String(value)));return card}
 function collectorContent(o){
