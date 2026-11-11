@@ -62,6 +62,21 @@ class ObservabilityParityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(snapshot["alerts"]["items"][0]["name"], "PortalProbeFailed")
         self.assertEqual([item["job"] for item in snapshot["targets"]["items"]], ["ec2-node"])
 
+    async def test_homepage_and_community_collectors_are_visible(self):
+        class ServiceChecksClient(Client):
+            async def get(self, url, params=None):
+                if (params or {}).get("query") == SCRAPE_TARGET_QUERY:
+                    jobs = ("homepage-health", "homepage-organization", "community-health", "community-questions", "unrelated")
+                    return Response({"status": "success", "data": {"result": [
+                        {"metric": {"job": job, "instance": job}, "value": [1000, "1"]}
+                        for job in jobs
+                    ]}})
+                return await super().get(url, params)
+
+        snapshot = await self.observer.collect(ServiceChecksClient(), end=1000)
+        self.assertEqual([row["job"] for row in snapshot["targets"]["items"]],
+                         ["homepage-health", "homepage-organization", "community-health", "community-questions"])
+
     async def test_scrape_metadata_is_matched_without_exposing_raw_error(self):
         class ScrapeTransition(Client):
             def __init__(self, up, health, last_scrape):
