@@ -181,7 +181,7 @@ function renderDashboard(d,o,overview){
  $('.side-status').replaceChildren(E('div','시스템 상태'),E('p',!d?'미확인':known?'기능 점검 정상':'점검 확인 필요'),E('div','조회 시각'),E('p',date(d?.as_of||o?.as_of)));
  const targets=o?.targets?.status==='ok'?o.targets.items:null;const vals=[c?.new,c?c.accepted+c.in_progress:null,c?.closed,targets?targets.filter(t=>t.up).length+' / '+targets.length:null];const notes=['관리자 대응 대기','접수 · 조치 진행','전체 종료 이력','Prometheus 수집 대상'];
  $$('.kpi').forEach((e,i)=>{e.querySelector('strong').textContent=vals[i]===undefined||vals[i]===null?'미확인':String(vals[i])+(i<3?' 건':'');e.querySelector('div:nth-child(2)>small').textContent=notes[i];wire(e,()=>go(i===3?'collectors':'incidents',i===2?'closed':'open'))});$$('.kpi')[2].querySelector('h3').textContent='종료 사건 이력';renderNotificationIndicators(d,o);
- renderServiceHealth(servers);renderMonitoringPaths(servers,o);renderServices(o);renderResources(o);renderIncidentOverview(overview);renderIncidentTimeline(overview);renderCollectorPreview(o);$('.footer p:last-child').textContent=modeNote();
+ renderServiceHealth(servers,o);renderMonitoringPaths(servers,o);renderServices(o);renderResources(o);renderIncidentOverview(overview);renderIncidentTimeline(overview);renderCollectorPreview(o);$('.footer p:last-child').textContent=modeNote();
  $('#incidents .panel-head a').onclick=e=>{e.preventDefault();go('incidents')};$('#incidents .panel-head .link').textContent='분석 이력 →';$('#incidents .panel-head .link').onclick=()=>go('incidents','closed');
  wire($('.resources .panel-head .link'),()=>go('resources'));
 }
@@ -199,9 +199,31 @@ function serviceStatusBadge(kind){
  badge.append(E('i',undefined,'service-status-dot'),E('span',serviceStatusLabels[kind]));
  return badge;
 }
-function renderServiceHealth(servers){
+const publicRequestPaths={
+ homepage:{label:'홈페이지 B',checks:[['app','FastAPI','헬스 체크 · /health','homepage-health'],['database','공유 PostgreSQL','조직도 조회 기능 점검','homepage-organization']]},
+ community:{label:'커뮤니티 C',checks:[['app','FastAPI','헬스 체크 · /health','community-health'],['database','SQLite','질문 목록 조회 기능 점검','community-questions']]}
+};
+function publicProbe(o,job){
+ const probe=o?.service_probes?.[job];
+ return {probe,kind:probe?.success===true?'normal':probe?.success===false?'abnormal':'unknown'};
+}
+function renderServiceHealth(servers,o){
  const root=$('.service-health-grid');
  root.replaceChildren();
+ const selector=$('#request-path-service'),selected=publicRequestPaths[selector?.value];
+ if(selector)selector.onchange=()=>renderServiceHealth(servers,o);
+ if(selected){
+  for(const [key,title,check,job] of selected.checks){
+   const {probe,kind}=publicProbe(o,job);
+   const card=E('article',undefined,'service-health-card service-'+key);
+   const heading=E('h3'),icon=E('span',undefined,'service-icon');
+   icon.append(uiIcon(key));heading.append(icon,E('span',title));
+   card.append(heading,E('p',check,'read-muted'),serviceStatusBadge(kind),
+    E('small','마지막 점검 '+(probe?.checked_at?date(probe.checked_at)+' (KST)':'미확인')));
+   root.append(card);
+  }
+  return;
+ }
  const success={app:'기능 점검 성공',database:'DB 연결·기능 점검 성공',proxy:'기능 점검 성공'};
  for(const key of ['proxy','app','database']){
   const def=serviceDefinitions[key];
@@ -750,7 +772,19 @@ function renderMonitoringPaths(servers,o){
  const logsOK=['portal-api','portal-nginx'].every(key=>o?.logs?.[key]?.status==='ok');
  telemetry.append(E('h4','메트릭·로그'),E('p',targets?'Prometheus 수집 '+targets.filter(t=>t.up===true).length+'/'+targets.length:'Prometheus 수집 미확인'),
   E('p',logsOK?'Loki 조회 성공':'Loki 조회 미확인'));
- cards.append(external,processing,proxy,telemetry);root.append(cards);
+ cards.append(external,processing,proxy,telemetry);
+ for(const {label,checks} of Object.values(publicRequestPaths)){
+  const card=E('article',undefined,'monitoring-path-card');
+  card.append(E('h4',label+' 접근'),E('p','모니터링 서버 → '+label));
+  for(const [, , check,job] of checks){
+   const {probe,kind}=publicProbe(o,job),line=E('p',check+' ');
+   line.append(serviceStatusBadge(kind));
+   if(probe?.checked_at)line.append(E('small',' · '+date(probe.checked_at)+' (KST)'));
+   card.append(line);
+  }
+  cards.append(card);
+ }
+ root.append(cards);
 }
 
 function renderCollectorPreview(o){
