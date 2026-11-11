@@ -83,8 +83,11 @@ function minuteStart(value){return Math.floor(value/60000)*60000}
 function validCustomRange(start,end){
  if(!start||!end)return null;
  const a=Date.parse(start),b=Date.parse(end),now=Date.now();
- return Number.isFinite(a)&&Number.isFinite(b)&&b-a>=60000&&b-a<=YEAR_MS&&a>=earliestCustomDate(now)&&b<=now+5000
-  ?{start:new Date(a).toISOString(),end:new Date(b).toISOString()}:null;
+ if(!(Number.isFinite(a)&&Number.isFinite(b)&&b-a>=60000&&b-a<=YEAR_MS&&a>=earliestCustomDate(now)&&b<=now+5000))return null;
+ // Date truncates sub-millisecond precision, which the API uses for the inclusive end of day.
+ const fraction=/\.(\d{6})(?:Z|[+-]\d{2}:\d{2})$/.exec(end)?.[1];
+ const endIso=new Date(b).toISOString();
+ return {start:new Date(a).toISOString(),end:fraction?endIso.replace(/\.\d{3}Z$/,'.'+fraction+'Z'):endIso};
 }
 function kstInput(value){return new Date(value+9*3600000).toISOString().slice(0,16)}
 function openCalendar(){
@@ -117,17 +120,23 @@ function openCalendar(){
  }
  fill(state.customRange?Date.parse(state.customRange.start):now-7*DAY_MS,
       state.customRange?Date.parse(state.customRange.end):now);
- if(!state.customRange){inputs.start.hour.value='';inputs.end.hour.value=''}
+ if(!state.customRange){
+  inputs.start.hour.value='';inputs.end.hour.value='';
+ }else if(kstInput(Date.parse(state.customRange.end)).endsWith('T23:59')&&state.customRange.end.endsWith(':59.999999Z')){
+  inputs.end.hour.value='';
+ }
  const submit=E('button','조회 적용','outline');submit.type='submit';
- form.append(presets,fields,E('p','KST 기준 최근 365일을 조회할 수 있습니다. 시간을 비우면 시작일 00:00부터 종료일 23:59까지 조회하며, 종료일이 오늘이면 현재 시각까지 조회합니다.','read-muted'),error,submit);
+ form.append(presets,fields,E('p','KST 기준 최근 365일을 조회할 수 있습니다. 시간을 비우면 시작일 00:00부터 종료일 마지막까지 조회하며, 종료일이 오늘이면 현재 시각까지 조회합니다.','read-muted'),error,submit);
  form.onsubmit=e=>{
   e.preventDefault();
-  const current=kstInput(Date.now());
+  const current=Date.now(),today=kstInput(current).slice(0,10);
   const startTime=inputs.start.hour.value.trim()||'00:00';
-  const endTime=inputs.end.hour.value.trim()||(inputs.end.day.value===current.slice(0,10)?current.slice(11):'23:59');
+  const endTime=inputs.end.hour.value.trim();
+  const endDay=inputs.end.day.value;
   const clockPattern=/^(?:[01]\d|2[0-3]):[0-5]\d$/;
-  if(!clockPattern.test(startTime)||!clockPattern.test(endTime)){error.textContent='시간을 24시간제 HH:MM으로 입력해 주세요. 예: 09:30, 18:00';return}
-  const range=validCustomRange(inputs.start.day.value+'T'+startTime+'+09:00',inputs.end.day.value+'T'+endTime+'+09:00');
+  if(!clockPattern.test(startTime)||(endTime&&!clockPattern.test(endTime))){error.textContent='시간을 24시간제 HH:MM으로 입력해 주세요. 예: 09:30, 18:00';return}
+  const end=endTime?endDay+'T'+endTime+'+09:00':endDay===today?new Date(current).toISOString():endDay+'T23:59:59.999999+09:00';
+  const range=validCustomRange(inputs.start.day.value+'T'+startTime+'+09:00',end);
   if(!range){error.textContent='기간을 확인해주세요. 최근 365일 안에서 시작과 종료를 1분 이상 차이 나게 선택하세요.';return}
   state.customRange=range;state.window='custom';state.overlay=null;
   detail.close();remember(false);loadView();

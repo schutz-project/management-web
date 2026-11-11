@@ -94,7 +94,7 @@ test('달력은 시간 입력 없이 여러 날짜를 조회하고 선택 범위
  assert(call);
  const query=new URLSearchParams(call.path.split('?')[1]);
  assert.equal(Date.parse(query.get('start')),Date.parse(start+'T00:00+09:00'));
- assert.equal(Date.parse(query.get('end')),Date.parse(end+'T23:59+09:00'));
+ assert.equal(query.get('end'),end+'T14:59:59.999999Z');
  const hash=new URLSearchParams(a.location.hash.slice(1));
  assert.equal(hash.get('start'),query.get('start'));assert.equal(hash.get('end'),query.get('end'));
  assert(a.doc.querySelector('.resource-compare'));
