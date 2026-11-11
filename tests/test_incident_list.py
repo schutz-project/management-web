@@ -119,6 +119,30 @@ class DashboardOverviewTests(IncidentActionFixture):
         self.assertEqual([row['rule_id'] for row in data['recent_detected']],['response_delay'])
         self.assertFalse(data['recent_detected'][0]['synthetic'])
 
+    def test_date_only_end_includes_last_minute_in_dashboard(self):
+        from datetime import timezone
+        kst=timezone(timedelta(hours=9))
+        day_end=now().astimezone(kst).replace(hour=23,minute=59,second=59,microsecond=999999)-timedelta(days=2)
+        start=day_end.replace(hour=0,minute=0,second=0,microsecond=0)
+        midnight=day_end+timedelta(microseconds=1)
+        with self.factory.begin() as db:
+            db.add_all([
+                Incident(id='last-minute',target_id='app',rule_id='response_delay',
+                         detected_at=day_end.astimezone(timezone.utc)-timedelta(seconds=30),
+                         closed_at=day_end.astimezone(timezone.utc),status='closed'),
+                Incident(id='next-day',target_id='app',rule_id='response_delay',detected_at=midnight.astimezone(timezone.utc)),
+            ])
+        self.login_cookie()
+        response=self.client.get('/api/dashboard/incident-overview',params={
+            'window':'custom','start':start.isoformat(),'end':day_end.isoformat()})
+        self.assertEqual(response.status_code,200)
+        result=response.json()
+        self.assertEqual(sum(bucket['detected'] for bucket in result['buckets']),1)
+        self.assertEqual(sum(bucket['closed'] for bucket in result['buckets']),1)
+        self.assertEqual(result['types']['delay'],1)
+        self.assertEqual([row['id'] for row in result['timeline']],['last-minute'])
+        self.assertEqual([row['id'] for row in result['recent_detected']],['last-minute'])
+
     def test_dashboard_uses_http_status_from_the_same_fresh_proxy_probe(self):
         from management.domain import record_probe
         moment=now()

@@ -1,6 +1,6 @@
 """Fixed, admin-only observability queries with bounded safe output and cache."""
 import asyncio,json,math,re,time
-from datetime import datetime,timedelta,timezone
+from datetime import datetime,timezone
 import httpx
 from management.host_inventory import host_inventory
 
@@ -20,8 +20,8 @@ def source_time(value):
         return None,None
 
 
-CUSTOM_MAX_SECONDS=86400
-KST=timezone(timedelta(hours=9))
+CUSTOM_MAX_SECONDS=365*86400
+KST_OFFSET_SECONDS=9*3600
 
 def custom_bounds(start,end,now=None):
     try:
@@ -32,8 +32,8 @@ def custom_bounds(start,end,now=None):
     except (ValueError,TypeError,AttributeError,OverflowError):
         raise ValueError('INVALID_RANGE') from None
     current=time.time() if now is None else now
-    month_start=datetime.fromtimestamp(current,KST).replace(day=1,hour=0,minute=0,second=0,microsecond=0)
-    earliest=(month_start-timedelta(days=1)).replace(day=1).timestamp()
+    kst_day_start=math.floor((current+KST_OFFSET_SECONDS)/86400)*86400-KST_OFFSET_SECONDS
+    earliest=kst_day_start-CUSTOM_MAX_SECONDS
     if not (math.isfinite(a) and math.isfinite(b) and 60<=b-a<=CUSTOM_MAX_SECONDS and a>=earliest and b<=current+5):
         raise ValueError('INVALID_RANGE')
     step=max(30,math.ceil((b-a)/(MAX_POINTS-1)))

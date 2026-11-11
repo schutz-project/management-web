@@ -82,8 +82,38 @@ test('운영 사건 그래프에 실제 조회 집계를 표시한다',async()=>
 test('누락 표본과 긴 수집 간격을 선으로 이어 붙이지 않는다',async()=>{const original=snapshot.observability.resources.items[0].history.cpu.points;try{const t=Date.parse(snapshot.observability.as_of);snapshot.observability.resources.items[0].history.cpu.points=[[t-180000,1.81],[t-150000,null],[t-120000,1.83],[t,1.82]];const a=boot({hash:'#view=resources'});await settle();assert.equal(a.doc.querySelector('.resource-compare-metric').querySelectorAll('polyline').length,3);}finally{snapshot.observability.resources.items[0].history.cpu.points=original}});
 test('수집이 지연되면 현재값은 숨기고 과거 표본과 지연 상태를 구분한다',async()=>{const host=snapshot.observability.resources.items[0],old=host.status;try{host.status='stale';const a=boot({hash:'#view=resources'});await settle();assert.match(a.doc.querySelector('.resource-compare-host').textContent,/수집 지연/);assert.match(a.doc.querySelector('.resource-compare-values').textContent,/현재미확인/);assert(a.doc.querySelector('.resource-compare-metric polyline'));}finally{host.status=old}});
 
-test('달력의 한국 시간 범위를 실제 사용자 지정 API로 전달하고 URL에 보존한다',async()=>{const a=boot({hash:'#view=resources'});await settle();a.doc.querySelectorAll('.periods button').find(e=>e.dataset.window==='custom').dispatch('click');await settle();const kst=t=>new Date(t+9*3600000).toISOString().slice(0,16),end=Date.now()-3600000,start=end-3600000;a.doc.querySelector('#range-start').value=kst(start);a.doc.querySelector('#range-end').value=kst(end);a.doc.querySelector('.calendar-form').requestSubmit();await settle();const call=a.calls.find(c=>c.path.startsWith('/api/observability?window=custom'));assert(call);const query=new URLSearchParams(call.path.split('?')[1]);assert.equal(Date.parse(query.get('start')),Date.parse(kst(start)+'+09:00'));assert.match(a.location.hash,/window=custom/);const hash=new URLSearchParams(a.location.hash.slice(1));assert.equal(hash.get('start'),query.get('start'));assert.equal(hash.get('end'),query.get('end'));assert(a.doc.querySelector('.resource-compare'));});
-test('달력에서 역전 또는 1일 초과 구간은 요청하지 않는다',async()=>{const a=boot();await settle();a.doc.querySelectorAll('.periods button').find(e=>e.dataset.window==='custom').dispatch('click');await settle();a.doc.querySelector('#range-start').value='2026-01-01T00:00';a.doc.querySelector('#range-end').value='2026-01-03T00:00';a.doc.querySelector('.calendar-form').requestSubmit();await settle();assert.match(a.doc.querySelector('.calendar-error').textContent,/기간을 확인/);assert(!a.calls.some(c=>c.path.includes('window=custom')));});
+test('달력은 시간 입력 없이 여러 날짜를 조회하고 선택 범위를 URL에 보존한다',async()=>{
+ const a=boot({hash:'#view=resources'});await settle();
+ a.doc.querySelectorAll('.periods button').find(e=>e.dataset.window==='custom').dispatch('click');
+ const kstDay=t=>new Date(t+9*3600000).toISOString().slice(0,10);
+ const start=kstDay(Date.now()-10*86400000),end=kstDay(Date.now()-2*86400000);
+ a.doc.querySelector('#range-start').value=start;
+ a.doc.querySelector('#range-end').value=end;
+ a.doc.querySelector('.calendar-form').requestSubmit();await settle();
+ const call=a.calls.find(c=>c.path.startsWith('/api/observability?window=custom'));
+ assert(call);
+ const query=new URLSearchParams(call.path.split('?')[1]);
+ assert.equal(Date.parse(query.get('start')),Date.parse(start+'T00:00+09:00'));
+ assert.equal(query.get('end'),end+'T14:59:59.999999Z');
+ const hash=new URLSearchParams(a.location.hash.slice(1));
+ assert.equal(hash.get('start'),query.get('start'));assert.equal(hash.get('end'),query.get('end'));
+ assert(a.doc.querySelector('.resource-compare'));
+});
+test('최근 1년을 한 번에 조회하고 잘못된 시간은 제출하지 않는다',async()=>{
+ const a=boot();await settle();
+ a.doc.querySelectorAll('.periods button').find(e=>e.dataset.window==='custom').dispatch('click');
+ a.doc.querySelectorAll('.calendar-presets button').find(b=>b.textContent==='최근 1년').dispatch('click');
+ const form=a.doc.querySelector('.calendar-form'),time=a.doc.querySelector('#range-start-time');
+ const correct=time.value;
+ time.value='25:00';form.requestSubmit();
+ assert.match(a.doc.querySelector('.calendar-error').textContent,/24시간제/);
+ assert(!a.calls.some(c=>c.path.includes('window=custom')));
+ time.value=correct;form.requestSubmit();await settle();
+ const call=a.calls.find(c=>c.path.startsWith('/api/dashboard/incident-overview?window=custom'));
+ assert(call);
+ const query=new URLSearchParams(call.path.split('?')[1]);
+ assert.equal(Date.parse(query.get('end'))-Date.parse(query.get('start')),365*86400000);
+});
 test('최종 시안의 세 서비스 카드와 두 개 보조 지표를 실제 데이터로 표시한다',async()=>{const a=boot();await settle();const cards=a.doc.querySelectorAll('.services .service');assert.equal(cards.length,3);assert(cards.every(c=>c.querySelectorAll('.service-aux>div').length===2));assert.match(cards[0].textContent,/앱 응답시간 p95/);assert.match(cards[1].textContent,/앱 DB 작업시간 p95/);assert.match(cards[1].querySelector('.service-aux').textContent,/연결 수미수집활성 세션미수집/);assert.match(cards[2].textContent,/\/health 프록시 응답 p95/);assert.equal(cards[0].querySelector('polyline').getAttribute('stroke'),'#087dff');assert.equal(cards[1].querySelector('polyline').getAttribute('stroke'),'#8b5cf6');assert.equal(cards[2].querySelector('polyline').getAttribute('stroke'),'#14b8a6');assert.match(a.doc.querySelector('.loki-status').textContent,/Loki/);});
 test('기능 점검 정상과 지표 조회 실패를 별도 표시한다',async()=>{const metric=snapshot.observability.metrics.app_ms,old=metric.status;try{metric.status='unavailable';const a=boot();await settle();const c=a.doc.querySelector('.service');assert.match(a.doc.querySelector('.service-health-card.service-app .service-badge').textContent,/정상/);assert.match(c.querySelector('.svc-data').textContent,/조회 실패/);}finally{metric.status=old}});
 test('경로별 프록시 지표가 없으면 5xx를 0으로 만들지 않는다',async()=>{const data=snapshot.observability.details.proxy_errors,old=data.items;try{data.items=[];const a=boot();await settle();assert.match(a.doc.querySelectorAll('.service')[2].querySelector('.service-aux').textContent,/\/health 5xx데이터 없음/);}finally{data.items=old}});

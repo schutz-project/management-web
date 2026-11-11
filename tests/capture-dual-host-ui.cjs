@@ -91,8 +91,11 @@ const server=http.createServer((req,res)=>{
    const enteredStart=kstInput(start),enteredEnd=kstInput(end);
    const expectedStart=new Date(enteredStart+'+09:00').toISOString();
    const expectedEnd=new Date(enteredEnd+'+09:00').toISOString();
-   await page.locator('#range-start').fill(enteredStart);
-   await page.locator('#range-end').fill(enteredEnd);
+   for(const [field,value] of [['start',enteredStart],['end',enteredEnd]]){
+    const [day,hour]=value.split('T');
+    await page.locator('#range-'+field).fill(day);
+    await page.locator('#range-'+field+'-time').fill(hour);
+   }
    await page.locator('.calendar-form button[type=submit]').click();
    await page.waitForURL(/window=custom/);
    const params=new URLSearchParams(page.url().split('#')[1]);
