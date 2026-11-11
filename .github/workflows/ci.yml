@@ -34,23 +34,20 @@ jobs:
       - name: Check integrated monitoring UI
         run: node --test tests/test-monitoring-ui.cjs
 
-      - name: Install isolated browser review tools
+      - name: Run Chromium review tests with Playwright image
         run: |
-          mkdir -p "$RUNNER_TEMP/schutz-browser-tools"
-          npm install --prefix "$RUNNER_TEMP/schutz-browser-tools" playwright@1.56.1
-          "$RUNNER_TEMP/schutz-browser-tools/node_modules/.bin/playwright" install --with-deps chromium
-
-      - name: Capture incident UI and verify browser interactions
-        env:
-          NODE_PATH: ${{ runner.temp }}/schutz-browser-tools/node_modules
-        run: node tests/capture-incident-ui.cjs
-
-      - name: Verify dual-host browser interactions with local fixtures
-        env:
-          NODE_PATH: ${{ runner.temp }}/schutz-browser-tools/node_modules
-        run: |
-          node tests/capture-dual-host-ui.cjs
-          node --test tests/check-dual-host-browser-failures.cjs tests/check-security-cia-browser.cjs
+          docker run --rm --init --ipc=host \
+            --user "$(id -u):$(id -g)" --env HOME=/tmp \
+            --volume "$GITHUB_WORKSPACE:/workspace" --workdir /workspace \
+            mcr.microsoft.com/playwright:v1.56.1-noble \
+            bash -euc '
+              tools="$(mktemp -d)"
+              npm install --prefix "$tools" playwright@1.56.1
+              export NODE_PATH="$tools/node_modules"
+              node tests/capture-incident-ui.cjs
+              node tests/capture-dual-host-ui.cjs
+              node --test tests/check-dual-host-browser-failures.cjs tests/check-security-cia-browser.cjs
+            '
 
       - name: Save isolated incident UI screenshots
         if: always()
