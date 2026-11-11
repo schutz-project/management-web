@@ -116,6 +116,8 @@ class DashboardOverviewTests(IncidentActionFixture):
         self.assertEqual(sum(b['detected'] for b in data['buckets']),1)
         self.assertEqual(sum(b['closed'] for b in data['buckets']),1)
         self.assertEqual(data['types'],{'delay':1,'collection':0,'other':0})
+        self.assertEqual([row['rule_id'] for row in data['recent_detected']],['response_delay'])
+        self.assertFalse(data['recent_detected'][0]['synthetic'])
 
     def test_dashboard_uses_http_status_from_the_same_fresh_proxy_probe(self):
         from management.domain import record_probe

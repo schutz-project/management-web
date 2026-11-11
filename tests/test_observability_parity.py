@@ -198,8 +198,21 @@ class CustomRangeTests(unittest.IsolatedAsyncioTestCase):
         a,b,step=custom_bounds(start,end,now=current)
         self.assertEqual(b-a,3600)
         self.assertLessEqual(int((b-a)//step)+1,300)
-        for x,y in [(end,start),(start,"2026-10-27T11:00:00+09:00"),("2026-10-01T10:00:00+09:00",end),("2026-10-25T10:00:00",end),(None,end),(start,"2026-10-25T13:00:00+09:00")]:
+        for x,y in [(end,start),(start,"2026-10-27T11:00:00+09:00"),("2026-10-25T10:00:00",end),(None,end),(start,"2026-10-25T13:00:00+09:00")]:
             with self.subTest(x=x,y=y),self.assertRaises(ValueError): custom_bounds(x,y,now=current)
+
+    async def test_previous_calendar_month_is_selectable_in_kst(self):
+        from datetime import datetime
+        current=datetime.fromisoformat("2026-11-11T12:00:00+09:00").timestamp()
+        for start,end in [
+            ("2026-10-01T00:00:00+09:00","2026-10-01T01:00:00+09:00"),
+            ("2026-10-26T11:00:00+09:00","2026-10-26T13:00:00+09:00"),
+        ]:
+            with self.subTest(start=start):
+                a,b,_=custom_bounds(start,end,now=current)
+                self.assertGreater(b,a)
+        with self.assertRaises(ValueError):
+            custom_bounds("2026-09-30T23:59:00+09:00","2026-10-01T00:59:00+09:00",now=current)
 
     async def test_historical_metrics_keep_alerts_targets_and_logs_current(self):
         from datetime import datetime
