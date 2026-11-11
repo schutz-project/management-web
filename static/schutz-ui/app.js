@@ -69,6 +69,7 @@ $('#login-form').onsubmit=async e=>{e.preventDefault();if(state.busy)return;stat
 $('#auth-retry').onclick=()=>boot();
 async function logout(){if(state.mode.mode==='snapshot'){modal('저장 데이터 모드','서버 로그인 없이 저장 데이터를 표시 중입니다.');return}if(state.busy)return;state.busy=true;try{await api('/api/auth/logout',{method:'POST',headers:{'X-CSRF-Token':state.csrf}});signedOut('로그아웃했습니다.');await restoreContext(false)}catch(e){feedback(e.message,true)}finally{state.busy=false}}
 wire($('.profile'),()=>{const p=E('div');p.append(E('p','로그인 계정: '+state.user.username),button('로그아웃',async()=>{detail.close();await logout()}));modal('계정',p)});
+const DAY_MS=86400000, YEAR_MS=365*DAY_MS;
 function locationState(){const p=new URLSearchParams(location.hash.slice(1));state.incidentScope=['operational','synthetic','all'].includes(p.get('incident_scope'))?p.get('incident_scope'):'operational';const v=p.get('view');state.view=['dashboard','incidents','services','resources','collectors','logs','settings'].includes(v)?v:'dashboard';const w=p.get('window');state.window=['live','15m','1h','6h','24h','custom'].includes(w)?w:'15m';state.customRange=validCustomRange(p.get('start'),p.get('end'));if(state.window==='custom'&&!state.customRange)state.window='15m';state.resourceKey=['cpu','memory','disk'].includes(p.get('resource'))?p.get('resource'):'cpu';state.resourceHost=(p.get('host')||'').slice(0,120)||null;state.service=['app','database','proxy'].includes(p.get('service'))?p.get('service'):'app';state.overlay=/^(?:incident-[a-f0-9-]{36}|info-[0-9]+)$/.test(p.get('overlay')||'')?p.get('overlay'):null;state.filter=['open','closed','all'].includes(p.get('status'))?p.get('status'):'open';state.q=(p.get('q')||'').slice(0,80);state.severity=['all','critical','warning','unknown'].includes(p.get('severity'))?p.get('severity'):'all';state.stage=['all','new','accepted','in_progress','closed'].includes(p.get('stage'))?p.get('stage'):'all';state.page=Math.max(1,Math.min(100000,Number(p.get('page'))||1));const direct=!location.hash&&/^\/incidents\/([a-f0-9-]{36})$/.exec(location.pathname);if(direct){state.view='incidents';state.overlay='incident-'+direct[1]}}
 function remember(push=true,overlay=false){const p=new URLSearchParams({view:state.view,window:state.window});if(state.incidentScope!=='operational')p.set('incident_scope',state.incidentScope);if(state.view==='incidents'){p.set('status',state.filter);p.set('page',String(state.page));if(state.q)p.set('q',state.q);if(state.severity!=='all')p.set('severity',state.severity);if(state.stage!=='all')p.set('stage',state.stage)}if(state.view==='services')p.set('service',state.service);if(state.view==='resources'){p.set('resource',state.resourceKey);if(state.resourceHost)p.set('host',state.resourceHost)}if(state.overlay)p.set('overlay',state.overlay);if(state.window==='custom'&&state.customRange){p.set('start',state.customRange.start);p.set('end',state.customRange.end)}const hash='#'+p;const marker={schutz:true,schutzOverlay:overlay,listScroll:state.listScroll};if(push&&location.hash!==hash)history.pushState(marker,'',hash);else history.replaceState(push?(history.state||marker):marker,'',hash)}
 function go(v,filter,service){if(state.busy)return;state.overlay=null;detail.close();state.view=v;if(filter)state.filter=filter;if(service)state.service=service;state.page=1;remember();loadView();window.scrollTo?.({top:0,behavior:'instant'})}
@@ -77,10 +78,62 @@ const views=['dashboard','incidents','services','resources','collectors','logs',
 $$('.nav>a').forEach((a,i)=>{a.href='#view='+views[i];a.onclick=e=>{e.preventDefault();go(views[i])}});
 const periods=['live','15m','1h','6h','24h'];$$('.periods button').forEach((b,i)=>{b.dataset.window=periods[i];b.onclick=()=>{state.overlay=null;detail.close();state.window=periods[i];remember();loadView()}});
 const calendarButton=button('사용자 지정 📅',()=>openCalendar());calendarButton.dataset.window='custom';calendarButton.className='custom-period';$('.periods').append(calendarButton);
-function previousMonthStartKst(now){const kst=new Date(now+9*3600000);return Date.UTC(kst.getUTCFullYear(),kst.getUTCMonth()-1,1)-9*3600000}
-function validCustomRange(start,end){if(!start||!end)return null;const a=Date.parse(start),b=Date.parse(end),now=Date.now();return Number.isFinite(a)&&Number.isFinite(b)&&b-a>=60000&&b-a<=86400000&&a>=previousMonthStartKst(now)&&b<=now+5000?{start:new Date(a).toISOString(),end:new Date(b).toISOString()}:null}
+function earliestCustomDate(now){return Math.floor((now+9*3600000)/DAY_MS)*DAY_MS-9*3600000-YEAR_MS}
+function minuteStart(value){return Math.floor(value/60000)*60000}
+function validCustomRange(start,end){
+ if(!start||!end)return null;
+ const a=Date.parse(start),b=Date.parse(end),now=Date.now();
+ return Number.isFinite(a)&&Number.isFinite(b)&&b-a>=60000&&b-a<=YEAR_MS&&a>=earliestCustomDate(now)&&b<=now+5000
+  ?{start:new Date(a).toISOString(),end:new Date(b).toISOString()}:null;
+}
 function kstInput(value){return new Date(value+9*3600000).toISOString().slice(0,16)}
-function openCalendar(){if(state.mode.mode==='snapshot')return;const form=E('form',undefined,'calendar-form'),now=Date.now(),a=E('input'),b=E('input');a.setAttribute('id','range-start');b.setAttribute('id','range-end');a.type=b.type='datetime-local';a.required=b.required=true;a.min=b.min=kstInput(previousMonthStartKst(now));a.max=b.max=kstInput(now);a.value=kstInput(state.customRange?Date.parse(state.customRange.start):now-3600000);b.value=kstInput(state.customRange?Date.parse(state.customRange.end):now);for(const [text,input]of [['시작 일시 (KST)',a],['종료 일시 (KST)',b]]){const label=E('label',text);label.setAttribute('for',input.id);form.append(label,input)}const error=E('p',undefined,'calendar-error');error.setAttribute('role','alert');const submit=E('button','조회 적용','outline');submit.type='submit';form.append(E('p','지난달 1일부터 현재까지 1분 이상, 최대 1일 구간을 선택하세요. 시간은 한국 시간(KST) 기준입니다.','read-muted'),error,submit);form.onsubmit=e=>{e.preventDefault();const range=validCustomRange(a.value+'+09:00',b.value+'+09:00');if(!range){error.textContent='기간을 확인해주세요. 지난달 1일부터 현재까지 시작보다 늦은 종료 시각, 1분~1일 구간만 가능합니다.';return}state.customRange=range;state.window='custom';state.overlay=null;detail.close();remember(false);loadView()};modal('사용자 지정 기간',form)}
+function openCalendar(){
+ if(state.mode.mode==='snapshot')return;
+ const form=E('form',undefined,'calendar-form'),now=minuteStart(Date.now());
+ const min=kstInput(earliestCustomDate(now)).slice(0,10),max=kstInput(now).slice(0,10);
+ const presets=E('div',undefined,'calendar-presets');
+ const fields=E('div',undefined,'calendar-fields');
+ const inputs={};
+ for(const [id,label] of [['start','시작'],['end','종료']]){
+  const group=E('div',undefined,'calendar-field');
+  const day=E('input'),hour=E('input');
+  day.id='range-'+id;day.type='date';day.required=true;day.min=min;day.max=max;
+  hour.id='range-'+id+'-time';hour.type='text';hour.placeholder='HH:MM';hour.maxLength=5;
+  for(const [input,title] of [[day,label+' 날짜'],[hour,label+' 시간 (선택, 24시간제)']]){
+   const fieldLabel=E('label',title);fieldLabel.setAttribute('for',input.id);group.append(fieldLabel,input);
+  }
+  inputs[id]={day,hour};
+  fields.append(group);
+ }
+ function fill(start,end){
+  for(const [id,value] of [['start',start],['end',end]]){
+   const [day,hour]=kstInput(value).split('T');
+   inputs[id].day.value=day;inputs[id].hour.value=hour;
+  }
+ }
+ const error=E('p',undefined,'calendar-error');error.setAttribute('role','alert');
+ for(const [label,days] of [['최근 7일',7],['최근 30일',30],['최근 90일',90],['최근 1년',365]]){
+  presets.append(button(label,()=>{const end=minuteStart(Date.now());fill(end-days*DAY_MS,end);error.textContent=''}));
+ }
+ fill(state.customRange?Date.parse(state.customRange.start):now-7*DAY_MS,
+      state.customRange?Date.parse(state.customRange.end):now);
+ if(!state.customRange){inputs.start.hour.value='';inputs.end.hour.value=''}
+ const submit=E('button','조회 적용','outline');submit.type='submit';
+ form.append(presets,fields,E('p','KST 기준 최근 365일을 조회할 수 있습니다. 시간을 비우면 시작일 00:00부터 종료일 23:59까지 조회하며, 종료일이 오늘이면 현재 시각까지 조회합니다.','read-muted'),error,submit);
+ form.onsubmit=e=>{
+  e.preventDefault();
+  const current=kstInput(Date.now());
+  const startTime=inputs.start.hour.value.trim()||'00:00';
+  const endTime=inputs.end.hour.value.trim()||(inputs.end.day.value===current.slice(0,10)?current.slice(11):'23:59');
+  const clockPattern=/^(?:[01]\d|2[0-3]):[0-5]\d$/;
+  if(!clockPattern.test(startTime)||!clockPattern.test(endTime)){error.textContent='시간을 24시간제 HH:MM으로 입력해 주세요. 예: 09:30, 18:00';return}
+  const range=validCustomRange(inputs.start.day.value+'T'+startTime+'+09:00',inputs.end.day.value+'T'+endTime+'+09:00');
+  if(!range){error.textContent='기간을 확인해주세요. 최근 365일 안에서 시작과 종료를 1분 이상 차이 나게 선택하세요.';return}
+  state.customRange=range;state.window='custom';state.overlay=null;
+  detail.close();remember(false);loadView();
+ };
+ modal('사용자 지정 기간',form);
+}
 $('#refresh').onclick=()=>loadView();wire($('.notify'),()=>toggleAlerts());
 function observationParams(){const params=new URLSearchParams({window:state.window==='live'?'15m':state.window});if(state.window==='custom'&&state.customRange){params.set('start',state.customRange.start);params.set('end',state.customRange.end)}return params}
 async function getObservation(){return api('/api/observability?'+observationParams())}
@@ -782,8 +835,10 @@ function renderIncidentOverview(data){
   const total=buckets.reduce((n,b)=>n+b[key],0);
   legend.append(E('span',label+' '+total+'건'));
  }
- chart.append(svg('text',{x:36,y:170,fill:'#4f6888','font-size':12},clock(Date.parse(data.start))));
- chart.append(svg('text',{x:402,y:170,'text-anchor':'end',fill:'#4f6888','font-size':12},clock(Date.parse(data.end))));
+ const first=Date.parse(data.start),last=Date.parse(data.end);
+ const axisLabel=last-first>=DAY_MS?value=>kstInput(value).slice(0,10):clock;
+ chart.append(svg('text',{x:36,y:170,fill:'#4f6888','font-size':12},axisLabel(first)));
+ chart.append(svg('text',{x:402,y:170,'text-anchor':'end',fill:'#4f6888','font-size':12},axisLabel(last)));
  trend.append(chart,legend,E('small','12개 구간 · 종료는 사건 처리 기록 기준','overview-note'));
  const entries=[['delay','응답 지연'],['collection','수집 실패'],['other','기타']];
  const total=entries.reduce((n,[key])=>n+data.types[key],0);

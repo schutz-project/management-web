@@ -235,3 +235,8 @@
  .service-health-card{position:relative}
  .service-health-card:not(:last-child)::after{content:'→';position:absolute;right:-19px;top:calc(50% - .75em);color:#6982a1}
 }
+
+.calendar-presets{display:flex;flex-wrap:wrap;gap:8px}
+.calendar-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.calendar-field{display:grid;gap:6px}
+@media(max-width:480px){.calendar-fields{grid-template-columns:1fr}}
