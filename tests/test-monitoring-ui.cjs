@@ -389,3 +389,27 @@ test('사건 상세 제목과 그래프에 서비스 및 저장된 복구 확인
   assert.match(timing.textContent,verified?/복구 확인.*KST/:/복구 미확인/);
  }
 });
+
+test('홈 대시보드는 서비스별 발생선을 다른 색으로 그리고 종료는 점선으로 표시한다',async()=>{
+ const start='2026-11-05T05:00:00Z',end='2026-11-05T05:30:00Z';
+ const a=boot({overview:{start,end,buckets:[
+  {start,detected:2,closed:1,detected_by_service:{a:1,b:1}},
+  {start:end,detected:1,closed:0,detected_by_service:{c:1}}
+ ],types:{delay:3,collection:0,other:0}}});await settle();
+ const trend=a.doc.querySelector('.incident-trend'),lines=trend.querySelectorAll('polyline');
+ assert.deepEqual(lines.map(l=>l.getAttribute('data-series')),['a','b','c','closed']);
+ assert.equal(new Set(lines.map(l=>l.getAttribute('stroke'))).size,4);
+ assert.equal(lines[3].getAttribute('stroke-dasharray'),'5 4');
+ assert.match(trend.textContent,/발생 3건.*직원 포털 A 1건.*홈페이지 B 1건.*커뮤니티 C 1건.*사건 종료 1건/);
+});
+test('사건 상세에서 실제 응답시간 표본 위에 발생선과 복구선을 겹쳐 표시한다',async()=>{
+ const detected_at='2026-11-05T05:00:00Z',recovery_checked_at='2026-11-05T05:05:00Z',closed_at='2026-11-05T05:10:00Z';
+ const points=[[Date.parse(detected_at),35],[Date.parse(recovery_checked_at),6]];
+ const a=boot({observability:{metrics:{homepage_ms:{status:'ok',points}}},detail:{detected_at,recovery_checked_at,closed_at,monitoring:{labels:{job:'homepage-health'}}}});
+ await settle();a.doc.querySelector('#incidents tbody tr').dispatch('click');await settle();
+ const chart=a.doc.querySelector('.incident-metric-chart');
+ assert(a.calls.some(c=>c.path.startsWith('/api/observability?window=custom&')));
+ assert.equal(chart.querySelectorAll('polyline')[0].getAttribute('stroke'),'#8040b8');
+ assert(chart.querySelector('rect'));
+ assert.deepEqual(chart.querySelectorAll('line').slice(-2).map(l=>l.getAttribute('stroke')),['#b4233d','#087851']);
+});
