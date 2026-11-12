@@ -50,6 +50,19 @@ METRICS={
  'app_ms':'histogram_quantile(0.95,sum by (le) (rate(portal_http_duration_bucket{job="portal-otel"}[5m])))',
  'db_ms':'histogram_quantile(0.95,sum by (le) (rate(portal_db_duration_bucket{job="portal-otel"}[5m])))',
 }
+PUBLIC_METRIC_SOURCES = {}
+for service_key in ('homepage', 'community'):
+    service_selector = '{service="schutz-' + service_key + '"}'
+    counter = 'schutz_service_http_requests_total'
+    requests = 'sum(rate(' + counter + service_selector + '[2m]))'
+    errors = 'sum(rate(' + counter + service_selector[:-1] + ',status_class="5xx"}[2m]))'
+    METRICS.update({
+        service_key+'_requests': requests,
+        service_key+'_errors': errors,
+        service_key+'_ms': '1000 * histogram_quantile(0.95,sum by (le) (rate(schutz_service_http_duration_seconds_bucket'+service_selector+'[5m])))',
+    })
+    PUBLIC_METRIC_SOURCES[service_key] = 'max(timestamp('+counter+service_selector+'))'
+
 # These fixed queries preserve the operational panels used before Grafana retirement.
 DETAIL_PROM={
  'app_routes':'sum by (http_route) (rate(portal_http_requests{job="portal-otel"}[2m]))',
@@ -80,6 +93,26 @@ UVICORN_ACCESS = re.compile(
 )
 
 def public_access_log(service, raw):
+    if raw.startswith('{'):
+        try: row=json.loads(raw)
+        except ValueError: return None
+        if not isinstance(row,dict) or row.get('event_type')!='http_request':
+            return None
+        status=row.get('status_code')
+        if type(status) is not int or not 100<=status<=599:
+            return None
+        route=row.get('route')
+        allowed=PUBLIC_LOG_ROUTES[service]
+        if service=='schutz-community':
+            route={'/api/guides/{guide_id}':'/api/guides/{id}','/api/questions/{question_id}':'/api/questions/{id}'}.get(route,route) if isinstance(route,str) else route
+        if not isinstance(route,str) or (route not in allowed and route not in {p+'/{id}' for p in allowed}):
+            route='other'
+        result={'route':route,'status_code':status,'synthetic':row.get('synthetic') is True}
+        elapsed=number(row.get('duration_ms'))
+        if elapsed is not None and elapsed>=0: result['duration_ms']=elapsed
+        method=row.get('method')
+        if isinstance(method,str) and re.fullmatch(r'[A-Z]{1,10}',method): result['method']=method
+        return result
     match = UVICORN_ACCESS.fullmatch(raw.rstrip('\r\n'))
     if not match:
         return None
@@ -169,6 +202,7 @@ class Observer:
                 if data.get('status')!='success': raise ValueError('QUERY_FAILED')
                 return data['data']['result']
         tasks={'source':prom('max(timestamp(portal_http_requests{job="portal-otel"}))'),'node_source':prom(NODE_SOURCE_QUERY)}
+        tasks.update({key+'_source':prom(expr) for key,expr in PUBLIC_METRIC_SOURCES.items()})
         tasks.update({key:prom(expr,True) for key,expr in METRICS.items()});tasks.update({key:prom(expr) for key,expr in RESOURCE.items()})
         tasks.update({'history_'+key:prom(expr,True) for key,expr in RESOURCE.items()})
         tasks.update({service:logs(service) for service in LOG_SERVICES})
@@ -183,11 +217,13 @@ class Observer:
         results=await asyncio.gather(*tasks.values(),return_exceptions=True); data=dict(zip(tasks,results))
         def fresh(stamp):
             value=number(stamp);return value is not None and -5<=end-value<=60
-        source=data['source'];source_ok=not isinstance(source,Exception)
-        source_stamp=source[0]['value'][1] if source_ok and source else None
-        source_fresh=fresh(source_stamp)
         metrics={}
         for key in METRICS:
+            service_key=key.partition('_')[0]
+            source=data[service_key+'_source'] if service_key in PUBLIC_METRIC_SOURCES else data['source']
+            source_ok=not isinstance(source,Exception)
+            source_stamp=source[0]['value'][1] if source_ok and source else None
+            source_fresh=fresh(source_stamp)
             result=data[key];status='unavailable' if isinstance(result,Exception) or not source_ok else 'stale' if source_stamp is not None and not source_fresh else 'no_data'
             points=[]; value=None
             if not isinstance(result,Exception) and result:
