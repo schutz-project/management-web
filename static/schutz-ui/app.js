@@ -490,12 +490,32 @@ function servicePerformanceDefinition(key){
  const entry=publicRequestPaths[key];
  return entry?{name:entry.label,target:'FastAPI',label:'앱 응답시간 p95',color:serviceDefinitions.app.color}:serviceDefinitions[key];
 }
-function showServices(o){const key=state.service,entry=publicRequestPaths[key],def=servicePerformanceDefinition(key),metric=serviceMetric(o,key),servers=state.dashboard?.servers||[];pageTitle('서비스 모니터링 상세 · '+def.name,o);page.append(button('← 서비스 상태로 돌아가기',()=>go('dashboard')));const switchService=(k,focus=false)=>{if(state.busy)return;state.service=k;remember();page.replaceChildren();showServices(o);if(focus)page.querySelector('#service-tab-'+k)?.focus?.()};const keys=['app','database','proxy','homepage','community'];const layout=E('div',undefined,'service-analysis-layout'),tabs=E('div',undefined,'service-tabs');tabs.setAttribute('role','tablist');tabs.setAttribute('aria-label','서비스 선택');tabs.setAttribute('aria-orientation','horizontal');keys.forEach((k,i)=>{const b=button('',()=>switchService(k));const label=serviceDefinitions[k]?.name||publicRequestPaths[k].label;
+function showServices(o){const key=state.service,entry=publicRequestPaths[key],def=servicePerformanceDefinition(key),metric=serviceMetric(o,key),servers=state.dashboard?.servers||[];pageTitle('서비스 모니터링 상세 · '+(entry?def.name:'직원 포털 A · '+def.name),o);page.append(button('← 서비스 상태로 돌아가기',()=>go('dashboard')));const switchService=(next,focusId)=>{
+ if(state.busy)return;
+ state.service=next;remember();page.replaceChildren();showServices(o);
+ if(focusId)page.querySelector('#'+focusId)?.focus?.();
+};
+ const layout=E('div',undefined,'service-analysis-layout');
+ const group=E('div',undefined,'service-groups');
+ group.setAttribute('role','group');group.setAttribute('aria-label','서비스 그룹 선택');
+ for(const [groupKey,label] of [['portal','직원 포털 A'],['homepage','홈페이지 B'],['community','커뮤니티 C']]){
+  const selected=groupKey===(entry?key:'portal');
+  const target=groupKey==='portal'?(entry?'app':key):groupKey;
+  const id='service-group-'+groupKey;
+  const b=button(label,()=>{if(!selected)switchService(target,id)});
+  b.setAttribute('id',id);b.setAttribute('aria-pressed',String(selected));
+  b.classList.add('service-tab-card');group.append(b);
+ }
+ layout.append(group);
+ const keys=['app','database','proxy'];
+ const tabs=E('div',undefined,'service-tabs');
+ tabs.setAttribute('role','tablist');tabs.setAttribute('aria-label','직원 포털 A 구성 요소');tabs.setAttribute('aria-orientation','horizontal');
+ if(!entry)keys.forEach((k,i)=>{const b=button('',()=>switchService(k));const label=serviceDefinitions[k]?.name||publicRequestPaths[k].label;
  const check=serviceDetailStatus(o,servers,k);
  b.append(uiIcon(publicRequestPaths[k]?'app':k),E('span',label),serviceStatusBadge(check.kind));
  b.append(E('small','최근 점검 '+(check.checkedAt?date(check.checkedAt)+' (KST)':'미확인'),'service-tab-time'));
  if(k===key){const selected=E('small','선택됨','service-tab-selected');selected.setAttribute('aria-hidden','true');b.append(selected)}
- b.setAttribute('aria-label',label);b.classList.add('service-tab-card','service-tab-'+k);b.setAttribute('role','tab');b.setAttribute('aria-selected',String(k===key));b.setAttribute('aria-controls','service-analysis-panel');b.setAttribute('id','service-tab-'+k);b.tabIndex=k===key?0:-1;b.onkeydown=e=>{if(['ArrowRight','ArrowLeft','ArrowDown','ArrowUp','Home','End'].includes(e.key)){e.preventDefault();const next=e.key==='Home'?0:e.key==='End'?keys.length-1:(i+(['ArrowRight','ArrowDown'].includes(e.key)?1:keys.length-1))%keys.length;switchService(keys[next],true)}};tabs.append(b)});const panel=E('section',undefined,'service-analysis-panel');panel.setAttribute('id','service-analysis-panel');panel.setAttribute('role','tabpanel');panel.setAttribute('aria-labelledby','service-tab-'+key);const head=E('div',undefined,'service-analysis-head');
+ b.setAttribute('aria-label',label);b.classList.add('service-tab-card','service-tab-'+k);b.setAttribute('role','tab');b.setAttribute('aria-selected',String(k===key));b.setAttribute('aria-controls','service-analysis-panel');b.setAttribute('id','service-tab-'+k);b.tabIndex=k===key?0:-1;b.onkeydown=e=>{if(['ArrowRight','ArrowLeft','ArrowDown','ArrowUp','Home','End'].includes(e.key)){e.preventDefault();const next=e.key==='Home'?0:e.key==='End'?keys.length-1:(i+(['ArrowRight','ArrowDown'].includes(e.key)?1:keys.length-1))%keys.length;switchService(keys[next],'service-tab-'+keys[next])}};tabs.append(b)});const panel=E('section',undefined,'service-analysis-panel');panel.setAttribute('id','service-analysis-panel');if(!entry)panel.setAttribute('role','tabpanel');panel.setAttribute('aria-labelledby',entry?'service-group-'+key:'service-tab-'+key);const head=E('div',undefined,'service-analysis-head');
  if(entry){
   const status=serviceDetailStatus(o,servers,key);
   head.append(uiIcon('app'),E('h3',entry.label),serviceStatusBadge(status.kind));
@@ -516,7 +536,7 @@ function showServices(o){const key=state.service,entry=publicRequestPaths[key],d
  evidenceRow.append(metricsPanel,entry?publicServiceCheckHistory(o,entry):serviceCheckHistory(o,key,health));
  if(entry){
   panel.append(chartRow,evidenceRow);
-  layout.append(tabs,panel);page.append(layout);return;
+  layout.append(panel);page.append(layout);return;
  }
  panel.append(chartRow,evidenceRow,E('p','유효 표본 '+stats.count+'개 · 평균·최대·최소·표준 편차는 구간별 p95 표시 표본의 통계이며 전체 요청의 통계가 아닙니다.','read-muted'));if(metric?.status!=='ok')panel.append(E('p','지표 상태: '+name(metric?.status||'no_data')+' · 조회 가능한 과거 추이와 구분합니다.','read-note'));layout.append(tabs,panel);page.append(layout);if(key==='app')page.append(E('p','HTTP 요청량·5xx 서버 오류는 앱 계측값입니다.','read-muted'));if(key==='database')page.append(E('p','앱 DB 작업시간은 애플리케이션 내부 계측값입니다. PostgreSQL 전체 부하나 세션 수를 뜻하지 않습니다. DB 연결 수·활성 세션은 미수집입니다.','read-muted'));if(key==='proxy')page.append(E('p','핵심 수치는 /health 경로 기준입니다. 아래 경로별 지표는 별도로 구분합니다.','read-muted'));
  if(key!=='database')page.append(routePerformance(o,key));

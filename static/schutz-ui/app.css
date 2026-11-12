@@ -242,3 +242,7 @@
 @media(max-width:480px){.calendar-fields{grid-template-columns:1fr}}
 
 .service-metric-group-title{grid-column:1/-1;margin:0;font-size:1rem}
+
+.service-groups{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.service-groups button{min-width:0;white-space:normal}
+.service-groups button[aria-pressed=true]{background:#e6f1ff;border-color:#75aaff;color:#0757ad}

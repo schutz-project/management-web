@@ -122,7 +122,8 @@ const server=http.createServer((req,res)=>{
    assert.equal(await page.locator('.nav>a').nth(2).getAttribute('aria-expanded'),null);
    assert.equal(await page.locator('.heading h1').textContent(),'서비스 모니터링');
    const tabs=page.locator('.service-tabs button');
-   assert.equal(await tabs.count(),5);
+   assert.equal(await tabs.count(),3);
+   assert.equal(await page.locator('.service-groups button').count(),3);
    const checks=page.locator('.service-check-history');
    assert.match(await checks.textContent(),/최근 FastAPI 점검 기록/);
    const first=await tabs.nth(0).boundingBox(),last=await tabs.nth(2).boundingBox();
