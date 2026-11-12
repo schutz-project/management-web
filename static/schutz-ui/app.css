@@ -250,3 +250,8 @@
 
 .incident-detail-timing{margin-top:18px;padding-top:14px;border-top:1px solid #dbe6f4}
 .incident-detail-timing svg{display:block;width:100%;height:24px}
+
+.incident-series-key{display:inline-flex;align-items:center;gap:5px}
+.incident-trend .incident-series-key svg{width:16px;height:8px;margin:0}
+
+.incident-detail-timing .incident-metric-chart svg{height:auto;max-height:270px}

@@ -247,7 +247,12 @@ function publicMetricText(metric,unit){
 function auxiliary(o,key){if(publicRequestPaths[key])return [['요청량',publicMetricText(o?.metrics?.[key+'_requests'],'건/초')],['5xx 서버 오류',publicMetricText(o?.metrics?.[key+'_errors'],'건/초')]];const m=o?.metrics||{},p=o?.details,route=k=>{const d=p?.[k],r=d?.items?.find(x=>x.route==='/health');return {status:d?.status==='ok'&&Number.isFinite(r?.value)?'ok':d?.status||'no_data',value:r?.value}};return key==='app'?[['요청량',metricText(m.requests,'건/초'),m.requests],['5xx 서버 오류',metricText(m.errors,'건/초'),m.errors]]:key==='database'?[['연결 수','미수집',null],['활성 세션','미수집',null]]:[['/health 요청량',metricText(route('proxy_requests'),'건/초'),null],['/health 5xx',metricText(route('proxy_errors'),'건/초'),null]]}
 function metricPoints(points){return (points||[]).filter(p=>Number.isFinite(p[0])&&Number.isFinite(p[1])&&p[1]>=0)}
 function serviceStats(points){const values=metricPoints(points).map(p=>p[1]);if(!values.length)return {mean:null,max:null,min:null,std:null,count:0};const mean=values.reduce((a,b)=>a+b,0)/values.length;return {mean,max:Math.max(...values),min:Math.min(...values),std:Math.sqrt(values.reduce((a,b)=>a+(b-mean)**2,0)/values.length),count:values.length}}
-function servicePlot(holder,points,color,label,compact=false,zoom=false){holder.replaceChildren();const data=points||[],valid=metricPoints(data);if(!valid.length){holder.append(E('p','데이터 없음 · 시계열 미수집 또는 조회 실패','read-muted'));return}const values=valid.map(p=>p[1]),low=Math.min(...values),high=Math.max(...values),pad=Math.max((high-low)*.2,.02),min=zoom?Math.max(0,low-pad):0,rawMax=zoom?high+pad:Math.max(high*1.1,.001),power=10**Math.floor(Math.log10(rawMax)),max=zoom?rawMax:Math.ceil(rawMax/power)*power,w=compact?320:900,h=compact?140:290,l=compact?40:60,r=12,t=15,b=26,start=data[0][0],end=data.at(-1)[0],X=x=>l+(x-start)/(end-start||1)*(w-l-r),Y=y=>t+(max-y)/(max-min)*(h-t-b);holder.append(E('p',(zoom?'변화 확대 ':'전체 표시 범위 ')+fmt(min,3)+'~'+fmt(max,3)+' ms','service-axis'));const s=svg('svg',{viewBox:`0 0 ${w} ${h}`,width:'100%',height:h,role:'img','aria-label':label+' '+fmt(min,3)+'~'+fmt(max,3)+' ms · 실제 p95 표본'});for(const v of [min,(min+max)/2,max])s.append(svg('line',{x1:l,x2:w-r,y1:Y(v),y2:Y(v),stroke:'#e3edf7'}),svg('text',{x:l-5,y:Y(v)+3,'text-anchor':'end','font-size':10,fill:'#6982a1'},fmt(v,2)));for(const v of [start,end])s.append(svg('text',{x:X(v),y:h-5,'text-anchor':v===start?'start':'end','font-size':10,fill:'#6982a1'},clock(v)));let segment=[],prev=null;const draw=()=>{if(segment.length){const coords=segment.map(p=>X(p[0])+','+Y(p[1])).join(' ');s.append(svg('polygon',{points:X(segment[0][0])+','+Y(min)+' '+coords+' '+X(segment.at(-1)[0])+','+Y(min),fill:color,'fill-opacity':.1}),svg('polyline',{points:coords,fill:'none',stroke:color,'stroke-width':2.5}))}segment=[]};for(const p of data){if(!Number.isFinite(p[1])||p[1]<0||(prev!==null&&p[0]-prev>(state.data?.step_seconds||30)*1500))draw();if(Number.isFinite(p[1])&&p[1]>=0)segment.push(p);prev=p[0]}draw();holder.append(s);if(compact)return;const dot=svg('circle',{r:4,fill:color}),cross=svg('line',{y1:t,y2:h-b,stroke:color,'stroke-dasharray':'3 3'});s.append(cross,dot);const output=E('output',undefined,'service-readout'),input=E('input',undefined,'service-scrubber');input.type='range';input.min=0;input.max=valid.length-1;input.value=valid.length-1;input.step=1;input.setAttribute('aria-label',label+' 시각별 표본 선택');const select=index=>{const p=valid[Math.max(0,Math.min(valid.length-1,index))];output.textContent=date(p[0])+' (KST) · '+fmt(p[1],3)+' ms';input.setAttribute('aria-valuetext',output.textContent);dot.setAttribute('cx',X(p[0]));dot.setAttribute('cy',Y(p[1]));cross.setAttribute('x1',X(p[0]));cross.setAttribute('x2',X(p[0]))};input.oninput=()=>select(Number(input.value));s.onpointermove=e=>{const rect=s.getBoundingClientRect(),when=start+Math.max(0,Math.min(1,(e.clientX-rect.left-l*rect.width/w)/((w-l-r)*rect.width/w)))*(end-start);let index=0;valid.forEach((p,i)=>{if(Math.abs(p[0]-when)<Math.abs(valid[index][0]-when))index=i});input.value=index;select(index)};select(valid.length-1);holder.append(output,input);if(zoom)holder.append(E('p','확대 축은 미세 변화 확인용이며 장애 임계치가 아닙니다.','read-muted'))}
+function servicePlot(holder,points,color,label,compact=false,zoom=false,events=null){holder.replaceChildren();const data=points||[],valid=metricPoints(data);if(!valid.length){holder.append(E('p','데이터 없음 · 시계열 미수집 또는 조회 실패','read-muted'));return}const values=valid.map(p=>p[1]),low=Math.min(...values),high=Math.max(...values),pad=Math.max((high-low)*.2,.02),min=zoom?Math.max(0,low-pad):0,rawMax=zoom?high+pad:Math.max(high*1.1,.001),power=10**Math.floor(Math.log10(rawMax)),max=zoom?rawMax:Math.ceil(rawMax/power)*power,w=compact?320:900,h=compact?140:290,l=compact?40:60,r=12,t=15,b=26,start=events?.start??data[0][0],end=events?.end??data.at(-1)[0],X=x=>l+(x-start)/(end-start||1)*(w-l-r),Y=y=>t+(max-y)/(max-min)*(h-t-b);holder.append(E('p',(zoom?'변화 확대 ':'전체 표시 범위 ')+fmt(min,3)+'~'+fmt(max,3)+' ms','service-axis'));const s=svg('svg',{viewBox:`0 0 ${w} ${h}`,width:'100%',height:h,role:'img','aria-label':label+' '+fmt(min,3)+'~'+fmt(max,3)+' ms · 실제 p95 표본'});if(events?.recovered!=null)s.append(svg('rect',{x:X(events.detected),y:t,width:X(events.recovered)-X(events.detected),height:h-b-t,fill:'#fbe8ed'}));for(const v of [min,(min+max)/2,max])s.append(svg('line',{x1:l,x2:w-r,y1:Y(v),y2:Y(v),stroke:'#e3edf7'}),svg('text',{x:l-5,y:Y(v)+3,'text-anchor':'end','font-size':10,fill:'#6982a1'},fmt(v,2)));for(const v of [start,end])s.append(svg('text',{x:X(v),y:h-5,'text-anchor':v===start?'start':'end','font-size':10,fill:'#6982a1'},clock(v)));let segment=[],prev=null;const draw=()=>{if(segment.length){const coords=segment.map(p=>X(p[0])+','+Y(p[1])).join(' ');s.append(svg('polygon',{points:X(segment[0][0])+','+Y(min)+' '+coords+' '+X(segment.at(-1)[0])+','+Y(min),fill:color,'fill-opacity':.1}),svg('polyline',{points:coords,fill:'none',stroke:color,'stroke-width':2.5}))}segment=[]};for(const p of data){if(!Number.isFinite(p[1])||p[1]<0||(prev!==null&&p[0]-prev>(events?.step||state.data?.step_seconds||30)*1500))draw();if(Number.isFinite(p[1])&&p[1]>=0)segment.push(p);prev=p[0]}draw();if(events){
+ for(const [when,color] of [[events.detected,'#b4233d'],[events.recovered,'#087851']]){
+  if(when==null)continue;
+  s.append(svg('line',{x1:X(when),x2:X(when),y1:t,y2:h-b,stroke:color,'stroke-width':2,'stroke-dasharray':'5 3'}));
+ }
+}holder.append(s);if(compact)return;const dot=svg('circle',{r:4,fill:color}),cross=svg('line',{y1:t,y2:h-b,stroke:color,'stroke-dasharray':'3 3'});s.append(cross,dot);const output=E('output',undefined,'service-readout'),input=E('input',undefined,'service-scrubber');input.type='range';input.min=0;input.max=valid.length-1;input.value=valid.length-1;input.step=1;input.setAttribute('aria-label',label+' 시각별 표본 선택');const select=index=>{const p=valid[Math.max(0,Math.min(valid.length-1,index))];output.textContent=date(p[0])+' (KST) · '+fmt(p[1],3)+' ms';input.setAttribute('aria-valuetext',output.textContent);dot.setAttribute('cx',X(p[0]));dot.setAttribute('cy',Y(p[1]));cross.setAttribute('x1',X(p[0]));cross.setAttribute('x2',X(p[0]))};input.oninput=()=>select(Number(input.value));s.onpointermove=e=>{const rect=s.getBoundingClientRect(),when=start+Math.max(0,Math.min(1,(e.clientX-rect.left-l*rect.width/w)/((w-l-r)*rect.width/w)))*(end-start);let index=0;valid.forEach((p,i)=>{if(Math.abs(p[0]-when)<Math.abs(valid[index][0]-when))index=i});input.value=index;select(index)};select(valid.length-1);holder.append(output,input);if(zoom)holder.append(E('p','확대 축은 미세 변화 확인용이며 장애 임계치가 아닙니다.','read-muted'))}
 function serviceAuxiliary(o,key){const grid=E('div',undefined,'service-aux');for(const [label,value]of auxiliary(o,key)){const item=E('div');item.append(E('span',label),E('strong',value));grid.append(item)}return grid}
 function renderServices(o){const root=$('.services');root.replaceChildren(E('h3','직원 포털 A','service-metric-group-title'));for(const key of ['app','database','proxy','homepage','community']){const entry=publicRequestPaths[key],def=servicePerformanceDefinition(key),metric=serviceMetric(o,key),card=E('article',undefined,'service service-'+key),head=E('div',undefined,'svc-head'),identity=E('div',undefined,'service-identity'),icon=E('span',undefined,'service-icon');icon.append(uiIcon(entry?'app':key));const names=E('div');names.append(E('strong',def.name),E('small',def.target));identity.append(icon,names);head.append(identity);const data=E('div',undefined,'svc-data');data.append(E('strong',entry?publicMetricText(metric,'ms'):metric?.status==='no_data'?'미수집':metricText(metric,'ms')));const plot=E('div',undefined,'service-chart');servicePlot(plot,metric?.points,def.color,def.label,true);const caption=E('div',undefined,'svc-caption');caption.append(E('span',(o?.historical?'선택 구간 ':'최근 ')+(o?.window_minutes||'미확인')+'분 · '+date(o?.as_of)+' (KST)'),E('span','지표 수집: '+(metric?.status==='ok'?'표본 확인':entry&&!metric?'미수집':name(metric?.status||'no_data'))));card.append(head,E('p',def.label,'svc-label'),data,plot,serviceAuxiliary(o,key),caption,E('span','상세 보기 →','service-card-link'));wire(card,()=>go('services',null,key));root.append(card)}const logs=o?.logs,ok=logs&&['portal-api','portal-nginx'].every(k=>logs[k]?.status==='ok'),loki=$('.loki-status');loki.replaceChildren(E('b','로그 저장소 · Loki'),E('span',ok?'최근 5분 로그 조회 성공 · 표시 '+Object.values(logs).reduce((n,v)=>n+v.items.length,0)+'건':'로그 조회 미확인'),button('로그 분석 →',()=>go('logs')));}
 
@@ -452,6 +457,28 @@ function incidentTiming(d){
   track.append(svg('line',{x1:x,x2:x,y1:1,y2:15,stroke:'#087851','stroke-width':2,'vector-effect':'non-scaling-stroke'}));
  }
  box.append(track,E('p','발생(탐지) '+contextDate(d.detected_at)+' (KST) · '+(verified?'복구 확인 '+contextDate(d.recovery_checked_at)+' (KST)':'복구 미확인'),'read-muted'));
+ const service=incidentService(d);
+ const metricKey={'직원 포털 A':'app_ms','홈페이지 B':'homepage_ms','커뮤니티 C':'community_ms'}[service];
+ if(metricKey&&state.mode.mode!=='snapshot'){
+  const current=Date.now(),start=detected-15*60000,end=Math.min(current,(verified?recovered:detected)+15*60000);
+  if(end>=detected&&end-start>=60000&&end-start<=365*DAY_MS){
+   const plot=E('div',undefined,'incident-metric-chart');
+   plot.append(E('p','사건 시점의 응답시간 조회 중','read-muted'));box.append(plot);
+   const params=new URLSearchParams({window:'custom',start:new Date(start).toISOString(),end:new Date(end).toISOString()});
+   const unavailable=()=>{if(plot.isConnected)plot.replaceChildren(E('p','사건 시점의 응답시간을 조회하지 못했습니다.','read-muted'))};
+   api('/api/observability?'+params).then(o=>{
+    if(!plot.isConnected)return;
+    const metric=o.metrics?.[metricKey],points=metric?.points?.filter(p=>p[0]>=start&&p[0]<=end);
+    if(!metricPoints(points).length){
+     if(metric?.status==='unavailable'){unavailable();return}
+     plot.replaceChildren(E('p','사건 시점의 응답시간 표본 없음','read-muted'));return;
+    }
+    track.remove();
+    const color={app_ms:'#1d65c1',homepage_ms:'#8040b8',community_ms:'#147c68'}[metricKey];
+    servicePlot(plot,points,color,'서비스 응답시간 p95',true,false,{start,end,detected,recovered:verified&&recovered<=end?recovered:null,step:o.step_seconds});
+   }).catch(unavailable);
+  }
+ }
  return box;
 }
 function incidentDetail(d){
@@ -963,14 +990,28 @@ function renderIncidentOverview(data){
   chart.append(svg('text',{x:29,y:y(n)+4,'text-anchor':'end',fill:'#4f6888','font-size':12},n));
  }
  const legend=E('div',undefined,'incident-chart-legend');
- for(const [key,label,color] of [['detected','발생','#eb5468'],['closed','사건 종료','#478ff1']]){
-  chart.append(svg('polyline',{points:buckets.map((b,i)=>x(i)+','+y(b[key])).join(' '),fill:'none',stroke:color,'stroke-width':2}));
-  buckets.forEach((b,i)=>{
-   const point=svg('circle',{cx:x(i),cy:y(b[key]),r:3,fill:'white',stroke:color,'stroke-width':1.5});
-   point.append(svg('title',{},date(b.start)+' (KST) · '+label+' '+b[key]+'건'));chart.append(point);
-  });
-  const total=buckets.reduce((n,b)=>n+b[key],0);
-  legend.append(E('span',label+' '+total+'건'));
+ const split=buckets.every(b=>b.detected_by_service);
+ const services=[['a','직원 포털 A','#1d65c1'],['b','홈페이지 B','#8040b8'],['c','커뮤니티 C','#147c68'],['unknown','서비스 미확인','#6b7280']];
+ const series=[
+  ...(split?services.map(([key,label,color])=>[key,label,color,b=>b.detected_by_service[key]||0,false]):[['detected','발생','#b4233d',b=>b.detected,false]]),
+  ['closed','사건 종료','#53627b',b=>b.closed,true]
+ ];
+ if(split)legend.append(E('strong','발생 '+buckets.reduce((n,b)=>n+b.detected,0)+'건'));
+ for(const [key,label,color,value,dashed] of series){
+  const total=buckets.reduce((n,b)=>n+value(b),0);
+  if(total){
+   chart.append(svg('polyline',{points:buckets.map((b,i)=>x(i)+','+y(value(b))).join(' '),fill:'none',stroke:color,'stroke-width':2,'stroke-dasharray':dashed?'5 4':'none','data-series':key}));
+   buckets.forEach((b,i)=>{
+    if(!value(b))return;
+    const point=svg('circle',{cx:x(i),cy:y(value(b)),r:3,fill:'white',stroke:color,'stroke-width':1.5});
+    point.append(svg('title',{},date(b.start)+' (KST) · '+label+' '+value(b)+'건'));chart.append(point);
+   });
+  }
+  if(key==='unknown'&&!total)continue;
+  const entry=E('span',label+' '+total+'건','incident-series-key');
+  const swatch=svg('svg',{width:16,height:8,'aria-hidden':'true'});
+  swatch.append(svg('line',{x1:0,x2:16,y1:4,y2:4,stroke:color,'stroke-width':2,'stroke-dasharray':dashed?'5 4':'none'}));
+  entry.prepend(swatch);legend.append(entry);
  }
  const first=Date.parse(data.start),last=Date.parse(data.end);
  const axisLabel=last-first>=DAY_MS?value=>kstInput(value).slice(0,10):clock;

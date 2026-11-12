@@ -9,6 +9,20 @@ from management.models import Target, Incident, Evidence, IncidentEvidence, Acti
 from management.domain import utc, closure_reasons, change, target
 
 def stamp(v): return utc(v).isoformat().replace('+00:00','Z') if v else None
+INCIDENT_SERVICES=('a','b','c','unknown')
+
+def incident_service(target_id, rule, labels):
+    labels=labels or {}
+    job=labels.get('job') or target_id
+    service=labels.get('service')
+    if service=='schutz-homepage' or job in {'homepage-health','homepage-organization','homepage-request-metrics'}:
+        return 'b'
+    if service=='schutz-community' or job in {'community-health','community-questions','community-request-metrics'}:
+        return 'c'
+    if job in {'proxy','app','database','portal-login','portal-health','portal-db-health','portal-otel'} or rule in {'unauthorized_read','unauthorized_write'}:
+        return 'a'
+    return 'unknown'
+
 def create_app(settings=None,engine=None,metric_readers=None,observer=None,session_control_transport=None):
     app=portal_app(settings,engine,metric_readers)
     app.title='Schutz 사건 관리'
@@ -136,23 +150,27 @@ def create_app(settings=None,engine=None,metric_readers=None,observer=None,sessi
         upper=datetime.fromtimestamp(last,timezone.utc)
         with factory.begin() as db:
             admin(request,db)
-            rows=db.execute(select(Incident.detected_at,Incident.closed_at,Incident.rule_id).where(
+            rows=db.execute(select(Incident.detected_at,Incident.closed_at,Incident.rule_id,
+                Incident.target_id,PrometheusAlertState.labels).outerjoin(
+                    PrometheusAlertState,PrometheusAlertState.target_key==Incident.target_id).where(
                 scope_condition,
                 or_((Incident.detected_at>=lower)&(Incident.detected_at<=upper),
                     (Incident.closed_at>=lower)&(Incident.closed_at<=upper))))
             step=(last-first)/12
             buckets=[{'start':stamp(datetime.fromtimestamp(first+i*step,timezone.utc)),
-                      'detected':0,'closed':0} for i in range(12)]
+                      'detected':0,'closed':0,'detected_by_service':dict.fromkeys(INCIDENT_SERVICES,0)} for i in range(12)]
             types={'delay':0,'collection':0,'other':0}
-            for detected,closed,rule in rows:
+            for detected,closed,rule,target_id,labels in rows:
                 for name,at in (('detected',detected),('closed',closed)):
                     if at is None:
                         continue
                     seconds=utc(at).timestamp()
                     if not first<=seconds<=last:
                         continue
-                    buckets[min(11,int((seconds-first)/step))][name]+=1
+                    bucket=buckets[min(11,int((seconds-first)/step))]
+                    bucket[name]+=1
                     if name=='detected':
+                        bucket['detected_by_service'][incident_service(target_id,rule,labels)]+=1
                         kind={'response_delay':'delay',
                               'monitoring_target_down':'collection','portal_telemetry_missing':'collection'}.get(rule,'other')
                         types[kind]+=1
