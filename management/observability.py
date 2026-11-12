@@ -296,8 +296,12 @@ class Observer:
                 route=metric.get(label,'')
                 if route not in ROUTES: route='other'
                 points=[]
-                for stamp,value in row.get('values',[])[-MAX_POINTS:]:
-                    points.append([float(stamp)*1000,number(value)])
+                for stamp,value in row.get('values',[]):
+                    seconds=float(stamp)
+                    if key in DETAIL_LOKI and not start<=seconds<=end:
+                        continue
+                    points.append([seconds*1000,number(value)])
+                points=points[-MAX_POINTS:]
                 if points:
                     recent=points[-1][0]/1000 >= end-max(60,step)
                     if recent or key in DETAIL_LOKI:

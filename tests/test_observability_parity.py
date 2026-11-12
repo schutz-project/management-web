@@ -154,6 +154,22 @@ class ObservabilityParityTests(unittest.IsolatedAsyncioTestCase):
             {"route": "/health", "value": 0, "points": [(985000, 0), (995000, 0)]},
         ])
 
+    async def test_proxy_samples_outside_requested_bounds_are_ignored(self):
+        class RoundedProxyRange(Client):
+            async def get(self, url, params):
+                if "/loki/" in url and "unwrap request_time" in params["query"]:
+                    return Response({"status": "success", "data": {"result": [
+                        {"metric": {"route": "/health"},
+                         "values": [[99, "0.001"], [995, "0.003"], [1653, "0.007"]]},
+                        {"metric": {"route": "/proxy-health"}, "values": [[1653, "0.008"]]},
+                    ]}})
+                return await super().get(url, params)
+
+        result = await self.observer.collect(RoundedProxyRange(), end=1000)
+        self.assertEqual(result["details"]["proxy_p95"]["items"], [
+            {"route": "/health", "value": 0.003, "points": [[995000, 0.003]]},
+        ])
+
     async def test_one_failed_query_does_not_hide_other_panels(self):
         snapshot = await self.observer.collect(Client(fail_proxy=True), end=1000)
         self.assertEqual(snapshot["details"]["proxy_p95"]["status"], "unavailable")
