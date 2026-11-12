@@ -400,6 +400,9 @@ test('홈 대시보드는 서비스별 발생선을 다른 색으로 그리고 �
  assert.deepEqual(lines.map(l=>l.getAttribute('data-series')),['a','b','c','closed']);
  assert.equal(new Set(lines.map(l=>l.getAttribute('stroke'))).size,4);
  assert.equal(lines[3].getAttribute('stroke-dasharray'),'5 4');
+ const markers=trend.querySelectorAll('g');
+ assert.deepEqual(markers.map(marker=>marker.querySelector('text').textContent),['A','B','C']);
+ assert.notEqual(markers[0].querySelector('rect').getAttribute('y'),markers[1].querySelector('rect').getAttribute('y'));
  assert.match(trend.textContent,/발생 3건.*직원 포털 A 1건.*홈페이지 B 1건.*커뮤니티 C 1건.*사건 종료 1건/);
 });
 test('사건 상세에서 실제 응답시간 표본 위에 발생선과 복구선을 겹쳐 표시한다',async()=>{
