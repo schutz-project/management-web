@@ -452,3 +452,15 @@ test('요청 없는 B 카드는 최신 헬스체크 응답시간을 앱 p95 앞�
  const card=a.doc.querySelector('.service-homepage').textContent;
  assert.match(card,/현재 \/health 점검 · 정상3\.551 ms.*앱 응답시간 p95.*최근 요청 없음.*마지막 p95 22 ms/);
 });
+
+test('공개 서비스 기본 그래프는 정기 점검 추이를 사용한다',async()=>{
+ const a=boot({observability:{
+  public_health_history:{'homepage-health':{status:'ok',points:[[1794500000000,3],[1794500030000,4]]},'community-health':{status:'unavailable',points:[]}},
+  metrics:{homepage_ms:{status:'no_data',points:[]},homepage_requests:{status:'ok',value:0}}
+ }});
+ await settle();
+ const home=a.doc.querySelector('.service-homepage');
+ assert.equal(home.querySelector('.service-chart svg').getAttribute('aria-label'),'/health 정기 점검 응답시간 추이 (ms)');
+ assert.match(home.textContent,/앱 응답시간 p95.*최근 요청 없음/);
+ assert.match(a.doc.querySelector('.service-community').textContent,/정기 점검 지표 조회 실패/);
+});
