@@ -240,3 +240,5 @@
 .calendar-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
 .calendar-field{display:grid;gap:6px}
 @media(max-width:480px){.calendar-fields{grid-template-columns:1fr}}
+
+.service-metric-group-title{grid-column:1/-1;margin:0;font-size:1rem}
