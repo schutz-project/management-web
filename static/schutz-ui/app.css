@@ -261,3 +261,38 @@
 .incident-timeline-row .incident-timeline-link{display:inline-flex;flex-wrap:wrap;gap:4px 8px;align-items:center;text-align:left;color:var(--incident-color,#586476)}
 .incident-timeline-link strong{background:var(--incident-color,#586476);color:white;border-radius:4px;padding:2px 6px}
 .incident-timeline-row svg{height:12px}
+
+.incident-detail-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .5rem;
+  margin-block: .75rem;
+}
+.incident-detail-tabs button[aria-pressed="true"] {
+  background: #1167bd;
+  color: white;
+  border-color: #1167bd;
+}
+.incident-detail-section:not([hidden]) {
+  display: grid;
+  gap: .75rem;
+}
+.incident-first-summary {
+  display: grid;
+  gap: .55rem;
+  padding: 1rem;
+  background: white;
+  border: 1px solid #d8e6f7;
+  border-inline-start: 4px solid #1167bd;
+  border-radius: .65rem;
+}
+.incident-first-summary :is(h3, p) { margin: 0; }
+.incident-first-summary > button { justify-self: start; }
+.incident-identifiers summary { cursor: pointer; }
+.incident-elapsed { display: block; margin-top: .25rem; }
+.incident-closure-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .4rem;
+  flex-basis: 100%;
+}

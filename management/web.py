@@ -129,7 +129,18 @@ def create_app(settings=None,engine=None,metric_readers=None,observer=None,sessi
                             result['http_status']=code
                 servers.append(result)
             counts={k:db.scalar(select(func.count()).select_from(Incident).where(Incident.status==k)) for k in ['new','accepted','in_progress','closed']}
-            return {'as_of':stamp(current),'servers':servers,'incident_counts':counts}
+            processing={}
+            for channel, kinds in (
+                ('worker', ('ai', 'slack', 'slack_ai', 'slack_recovery', 'slack_closed')),
+                ('slack', ('slack', 'slack_ai', 'slack_recovery', 'slack_closed')),
+            ):
+                attempt=db.scalar(select(Attempt).join(Job,Job.id==Attempt.job_id)
+                    .join(Incident,Incident.id==Job.incident_id)
+                    .where(Job.kind.in_(kinds),Incident.synthetic.is_(False))
+                    .order_by(Attempt.started_at.desc(),Attempt.id.desc()).limit(1))
+                processing[channel]={'outcome':attempt.outcome,
+                    'at':stamp(attempt.finished_at or attempt.started_at)} if attempt else None
+            return {'as_of':stamp(current),'servers':servers,'incident_counts':counts,'processing':processing}
     @app.get('/api/dashboard/incident-overview')
     def incident_overview(request:Request,window:str='15m',start:str|None=None,end:str|None=None,scope:str='operational'):
         from management.observability import WINDOWS, custom_bounds
@@ -158,7 +169,8 @@ def create_app(settings=None,engine=None,metric_readers=None,observer=None,sessi
                     (Incident.closed_at>=lower)&(Incident.closed_at<=upper))))
             step=(last-first)/12
             buckets=[{'start':stamp(datetime.fromtimestamp(first+i*step,timezone.utc)),
-                      'detected':0,'closed':0,'detected_by_service':dict.fromkeys(INCIDENT_SERVICES,0)} for i in range(12)]
+                      'detected':0,'closed':0,'detected_by_service':dict.fromkeys(INCIDENT_SERVICES,0),
+                      'closed_by_service':dict.fromkeys(INCIDENT_SERVICES,0)} for i in range(12)]
             types={'delay':0,'collection':0,'other':0}
             for detected,closed,rule,target_id,labels in rows:
                 for name,at in (('detected',detected),('closed',closed)):
@@ -169,8 +181,8 @@ def create_app(settings=None,engine=None,metric_readers=None,observer=None,sessi
                         continue
                     bucket=buckets[min(11,int((seconds-first)/step))]
                     bucket[name]+=1
+                    bucket[name+'_by_service'][incident_service(target_id,rule,labels)]+=1
                     if name=='detected':
-                        bucket['detected_by_service'][incident_service(target_id,rule,labels)]+=1
                         kind={'response_delay':'delay',
                               'monitoring_target_down':'collection','portal_telemetry_missing':'collection'}.get(rule,'other')
                         types[kind]+=1

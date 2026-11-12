@@ -70,13 +70,14 @@ for(const width of [1440,390]){
  }));
  test(width+'px: recovery and closed notifications are distinct',async()=>review(width,'closed',async page=>{
   await page.goto(base+'/#view=incidents&overlay=incident-'+id);await page.locator('.incident-workspace').waitFor();
+  await page.getByRole('button',{name:'조치·알림',exact:true}).click();
   const text=await page.locator('.incident-slack-card').textContent();
   assert.match(text,/해당 없음/);assert.match(text,/사건 종료 알림/);assert.match(text,/시험 처리 · 실제 연결 아님/);
   assert.match(await page.locator('.incident-closure-section').textContent(),/자동 증명되지는 않습니다/);
   if(width===1440){await page.locator('.incident-slack-card').scrollIntoViewIfNeeded();await capture(page,'security-notifications-preview');}
  }));
  test(width+'px: security closure requires manual stopped confirmation',async()=>review(width,'in_progress',async page=>{
-  await page.goto(base+'/#view=incidents&overlay=incident-'+id);await page.locator('#test-stopped').waitFor();
+  await page.goto(base+'/#view=incidents&overlay=incident-'+id);await page.getByRole('button',{name:'조치·알림',exact:true}).click();await page.locator('#test-stopped').waitFor();
   assert(await page.locator('.close-incident-action').isDisabled());
   await page.locator('#test-stopped').check();assert(!(await page.locator('.close-incident-action').isDisabled()));
   assert((await page.locator('.incident-evidence-table tbody tr').count())===3);
@@ -85,7 +86,7 @@ for(const width of [1440,390]){
 
 for(const width of [1440,390]){
  test(width+'px: explicit trial-session confirmation executes and displays receipt',async()=>review(width,'in_progress',async page=>{
-  await page.goto(base+'/#view=incidents&overlay=incident-'+id);await page.getByRole('button',{name:'시험 세션 폐기 실행',exact:true}).waitFor();
+  await page.goto(base+'/#view=incidents&overlay=incident-'+id);await page.getByRole('button',{name:'조치·알림',exact:true}).click();await page.getByRole('button',{name:'시험 세션 폐기 실행',exact:true}).waitFor();
   const run=page.getByRole('button',{name:'시험 세션 폐기 실행',exact:true});assert(await run.isDisabled());
   await page.getByText('시험 계정 test_user의 기존 세션 폐기를 실행합니다.',{exact:true}).locator('..').locator('input').check();
   assert(!(await run.isDisabled()));await run.click();
