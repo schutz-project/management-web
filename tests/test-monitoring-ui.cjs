@@ -114,7 +114,13 @@ test('최근 1년을 한 번에 조회하고 잘못된 시간은 제출하지 �
  const query=new URLSearchParams(call.path.split('?')[1]);
  assert.equal(Date.parse(query.get('end'))-Date.parse(query.get('start')),365*86400000);
 });
-test('최종 시안의 세 서비스 카드와 두 개 보조 지표를 실제 데이터로 표시한다',async()=>{const a=boot();await settle();const cards=a.doc.querySelectorAll('.services .service');assert.equal(cards.length,3);assert(cards.every(c=>c.querySelectorAll('.service-aux>div').length===2));assert.match(cards[0].textContent,/앱 응답시간 p95/);assert.match(cards[1].textContent,/앱 DB 작업시간 p95/);assert.match(cards[1].querySelector('.service-aux').textContent,/연결 수미수집활성 세션미수집/);assert.match(cards[2].textContent,/\/health 프록시 응답 p95/);assert.equal(cards[0].querySelector('polyline').getAttribute('stroke'),'#087dff');assert.equal(cards[1].querySelector('polyline').getAttribute('stroke'),'#8b5cf6');assert.equal(cards[2].querySelector('polyline').getAttribute('stroke'),'#14b8a6');assert.match(a.doc.querySelector('.loki-status').textContent,/Loki/);});
+test('메인 성능 지표를 A·B·C 순서로 표시하고 미수집을 구분한다',async()=>{const a=boot();await settle();const cards=a.doc.querySelectorAll('.services .service');assert.equal(cards.length,5);assert(cards.every(c=>c.querySelectorAll('.service-aux>div').length===2));assert.match(cards[0].textContent,/앱 응답시간 p95/);assert.match(cards[1].textContent,/앱 DB 작업시간 p95/);assert.match(cards[1].querySelector('.service-aux').textContent,/연결 수미수집활성 세션미수집/);assert.match(cards[2].textContent,/\/health 프록시 응답 p95/);assert.equal(cards[0].querySelector('polyline').getAttribute('stroke'),'#087dff');assert.equal(cards[1].querySelector('polyline').getAttribute('stroke'),'#8b5cf6');assert.equal(cards[2].querySelector('polyline').getAttribute('stroke'),'#14b8a6');assert.match(a.doc.querySelector('.service-metric-group-title').textContent,/직원 포털 A/);
+assert.match(cards[3].textContent,/홈페이지 B.*앱 응답시간 p95.*미수집/);
+assert.match(cards[4].textContent,/커뮤니티 C.*앱 응답시간 p95.*미수집/);
+assert.equal(cards[3].querySelector('.service-chart polyline'),null);
+assert.equal(cards[4].querySelector('.service-chart polyline'),null);
+cards[4].dispatch('click');await settle();assert.match(a.location.hash,/service=community/);
+assert.match(a.doc.querySelector('.loki-status').textContent,/Loki/);});
 test('기능 점검 정상과 지표 조회 실패를 별도 표시한다',async()=>{const metric=snapshot.observability.metrics.app_ms,old=metric.status;try{metric.status='unavailable';const a=boot();await settle();const c=a.doc.querySelector('.service');assert.match(a.doc.querySelector('.service-health-card.service-app .service-badge').textContent,/정상/);assert.match(c.querySelector('.svc-data').textContent,/조회 실패/);}finally{metric.status=old}});
 test('경로별 프록시 지표가 없으면 5xx를 0으로 만들지 않는다',async()=>{const data=snapshot.observability.details.proxy_errors,old=data.items;try{data.items=[];const a=boot();await settle();assert.match(a.doc.querySelectorAll('.service')[2].querySelector('.service-aux').textContent,/\/health 5xx데이터 없음/);}finally{data.items=old}});
 test('카드에서 상세로 이동하며 서비스 탭·축 모드와 키보드 시각 조회를 지원한다',async()=>{const a=boot();await settle();a.doc.querySelector('.service').dispatch('click');await settle();assert.equal(a.doc.querySelectorAll('.service-tabs button').length,5);assert.match(a.location.hash,/service=app/);a.doc.querySelectorAll('.service-modes button')[1].dispatch('click');assert.match(a.doc.querySelector('.service-detail-chart .service-axis').textContent,/변화 확대/);a.doc.querySelectorAll('.service-tabs button')[1].dispatch('click');assert.match(a.doc.querySelector('.service-analysis-head').textContent,/PostgreSQL/);assert.match(a.doc.querySelector('.service-detail-chart .service-axis').textContent,/전체 표시 범위/);a.doc.querySelectorAll('.service-tabs button')[1].onkeydown({key:'Home',preventDefault(){}});assert.match(a.doc.querySelector('.service-detail-chart .service-axis').textContent,/변화 확대/);const slider=a.doc.querySelector('.service-scrubber');slider.value=0;slider.oninput();assert.match(slider.getAttribute('aria-valuetext'),/ms/);assert.equal(a.doc.querySelectorAll('.service-statistics>div').length,5);});
@@ -127,12 +133,17 @@ test('홈페이지와 커뮤니티 상세는 현재 HTTP 점검과 결측 상태
  await settle();
  const panel=()=>a.doc.querySelector('.service-analysis-panel');
  assert.match(panel().textContent,/홈페이지 B/);
- assert.match(panel().textContent,/조직도 조회 기능 점검점검 이상/);
+ assert.match(panel().textContent,/앱 응답시간 p95 추이/);
+ assert.match(panel().textContent,/응답시간 요약/);
+ assert.match(panel().textContent,/요청량미수집5xx 서버 오류미수집/);
+ assert.equal(panel().querySelector('.service-detail-chart svg'),null);
+ assert.match(panel().textContent,/조직도 조회 기능 점검 점검 이상/);
  a.doc.querySelector('#service-tab-homepage').onkeydown({key:'End',preventDefault(){}});
  assert.match(a.location.hash,/service=community/);
  assert.match(panel().textContent,/커뮤니티 C/);
- assert.match(panel().textContent,/질문 목록 조회 기능 점검확인 불가/);
- assert.equal(panel().querySelector('.service-detail-chart'),null);
+ assert.match(panel().textContent,/질문 목록 조회 기능 점검 확인 불가/);
+ assert.match(panel().textContent,/앱 응답시간 p95 추이/);
+ assert.equal(panel().querySelector('.service-detail-chart svg'),null);
 });
 test('서비스 그래프는 결측과 긴 간격을 연결하지 않으며 표본 통계를 계산한다',async()=>{const metric=snapshot.observability.metrics.app_ms,old=metric.points;try{const t=Date.parse(snapshot.observability.as_of);metric.points=[[t-180000,1],[t-150000,null],[t-120000,3],[t,2]];const a=boot({hash:'#view=services&service=app'});await settle();assert.equal(a.doc.querySelector('.service-detail-chart').querySelectorAll('polyline').length,3);const stats=a.doc.querySelector('.service-statistics').textContent;assert.match(stats,/표본 평균2 ms/);assert.match(stats,/최대3 ms/);assert.match(stats,/최소1 ms/);assert.match(a.doc.querySelector('.service-analysis-panel').textContent,/전체 요청의 통계가 아닙니다/);}finally{metric.points=old}});
 
