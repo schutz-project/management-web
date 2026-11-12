@@ -212,6 +212,9 @@ class Observer:
         tasks['scrape_targets']=prom(SCRAPE_TARGET_QUERY,current=True)
         tasks['scrape_metadata']=scrape_metadata()
         probe = 'probe_success{job=~"homepage-health|homepage-organization|community-health|community-questions"}'
+        duration=probe.replace('probe_success','probe_duration_seconds',1)
+        tasks['service_probe_durations']=prom(
+            duration+' and (timestamp('+duration+') == timestamp('+probe+'))',current=True)
         tasks['service_probes']=prom(probe,current=True)
         tasks['service_probe_times']=prom('timestamp('+probe+')',current=True)
         results=await asyncio.gather(*tasks.values(),return_exceptions=True); data=dict(zip(tasks,results))
@@ -277,7 +280,16 @@ class Observer:
         hosts=host_inventory(nodes,targets,isinstance(source,Exception))
         def series(key,label):
             rows=data['detail_'+key]
-            if isinstance(rows,Exception): return {'status':'unavailable','items':[]}
+            if isinstance(rows,Exception):
+                detail={'status':'unavailable','items':[]}
+                if key in DETAIL_LOKI:
+                    if isinstance(rows,(TimeoutError,httpx.TimeoutException)):
+                        detail['failure_reason']='Loki 조회 시간 초과'
+                    elif isinstance(rows,httpx.HTTPStatusError):
+                        detail['failure_reason']=f'Loki HTTP {rows.response.status_code}'
+                    else:
+                        detail['failure_reason']='Loki 응답 확인 실패'
+                return detail
             items=[]
             for row in rows[:30]:
                 metric=row.get('metric',{})
@@ -308,11 +320,15 @@ class Observer:
             return values
 
         probe_states=probe_values(data['service_probes'])
+        probe_durations=probe_values(data['service_probe_durations'])
         probes={}
         for job,stamp in probe_values(data['service_probe_times']).items():
             value=probe_states.get(job)
             if value in (0,1) and stamp is not None and -5<=live_end-stamp<=60:
                 probes[job]={'success':value==1,'checked_at':datetime.fromtimestamp(stamp,timezone.utc).isoformat()}
+                duration=probe_durations.get(job)
+                if duration is not None and 0<=duration<=1e6:
+                    probes[job]['duration_ms']=duration*1000
         target_rows=[]
         metadata={}
         if isinstance(data['scrape_metadata'],list):
