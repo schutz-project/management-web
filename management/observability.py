@@ -298,11 +298,36 @@ class Observer:
                 points=[]
                 for stamp,value in row.get('values',[])[-MAX_POINTS:]:
                     points.append([float(stamp)*1000,number(value)])
-                if points and points[-1][0]/1000 >= end-max(60,step):
-                    items.append({'route':route,'value':points[-1][1],'points':points})
+                if points:
+                    recent=points[-1][0]/1000 >= end-max(60,step)
+                    if recent or key in DETAIL_LOKI:
+                        items.append({'route':route,'value':points[-1][1] if recent else None,'points':points})
             items.sort(key=lambda item:(item['route'], item['value'] is None))
             return {'status':'ok','items':items[:12]}
         details={key:series(key,'http_route' if key in DETAIL_PROM else 'route') for key in (*DETAIL_PROM,*DETAIL_LOKI)}
+        proxy_errors=details['proxy_errors']
+        proxy_requests=details['proxy_requests']
+        if proxy_errors['status']=='ok' and proxy_requests['status']=='ok':
+            # An empty error series is zero only where the same route had observed requests.
+            errors_by_route={item['route']:item for item in proxy_errors['items']}
+            for request in proxy_requests['items']:
+                route=request['route']
+                if route=='other':
+                    continue
+                existing=errors_by_route.get(route)
+                points=dict(existing['points']) if existing else {}
+                for stamp,value in request['points']:
+                    if value is not None and value>0:
+                        points.setdefault(stamp,0)
+                if not points:
+                    continue
+                ordered=sorted(points.items())[-MAX_POINTS:]
+                if existing is None:
+                    existing={'route':route}
+                    proxy_errors['items'].append(existing)
+                existing.update(points=ordered,value=ordered[-1][1] if ordered[-1][0]/1000 >= end-max(60,step) else None)
+            proxy_errors['items'].sort(key=lambda item:item['route'])
+            proxy_errors['items']=proxy_errors['items'][:12]
         alerts=data['firing_alerts'];alert_rows=[]
         if not isinstance(alerts,Exception):
             for row in alerts[:20]:

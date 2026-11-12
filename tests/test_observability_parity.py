@@ -141,6 +141,19 @@ class ObservabilityParityTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(row.get("failure_reason"), "연결 시간 초과" if matches and not up else None)
                 self.assertNotIn("internal-address", str(row))
 
+    async def test_empty_proxy_errors_are_zero_only_for_routes_with_requests(self):
+        class NoProxyErrors(Client):
+            async def get(self, url, params):
+                if "status >= 500" in (params or {}).get("query", ""):
+                    return Response({"status": "success", "data": {"result": []}})
+                return await super().get(url, params)
+
+        snapshot = await self.observer.collect(NoProxyErrors(), end=1000)
+        errors = snapshot["details"]["proxy_errors"]
+        self.assertEqual(errors["items"], [
+            {"route": "/health", "value": 0, "points": [(985000, 0), (995000, 0)]},
+        ])
+
     async def test_one_failed_query_does_not_hide_other_panels(self):
         snapshot = await self.observer.collect(Client(fail_proxy=True), end=1000)
         self.assertEqual(snapshot["details"]["proxy_p95"]["status"], "unavailable")
