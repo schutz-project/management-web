@@ -300,7 +300,19 @@ function publicLatencyText(o,key,metric){
  const requests=o?.metrics?.[key+'_requests'];
  return metric?.status==='no_data'&&requests?.status==='ok'&&requests.value===0?'최근 요청 없음':publicMetricText(metric,'ms');
 }
-function renderServices(o){const root=$('.services');root.replaceChildren(E('h3','직원 포털 A','service-metric-group-title'));for(const key of ['app','database','proxy','homepage','community']){const entry=publicRequestPaths[key],def=servicePerformanceDefinition(key),metric=serviceMetric(o,key),card=E('article',undefined,'service service-'+key),head=E('div',undefined,'svc-head'),identity=E('div',undefined,'service-identity'),icon=E('span',undefined,'service-icon');icon.append(uiIcon(entry?'app':key));const names=E('div');names.append(E('strong',def.name),E('small',def.target));identity.append(icon,names);head.append(identity);const data=E('div',undefined,'svc-data');data.append(E('strong',entry?publicLatencyText(o,key,metric):metric?.status==='no_data'?'미수집':metricText(metric,'ms')));const plot=E('div',undefined,'service-chart');servicePlot(plot,metric?.points,def.color,def.label,true);const caption=E('div',undefined,'svc-caption');caption.append(E('span',(o?.historical?'선택 구간 ':'최근 ')+(o?.window_minutes||'미확인')+'분 · '+date(o?.as_of)+' (KST)'),E('span','지표 수집: '+(metric?.status==='ok'?'표본 확인':entry&&!metric?'미수집':name(metric?.status||'no_data'))));const last=metricPoints(metric?.points).at(-1);if(entry&&last&&metric?.status!=='ok')caption.append(E('span','마지막 p95 '+fmt(last[1],3)+' ms · '+date(last[0])+' (KST)'));card.append(head,E('p',def.label,'svc-label'),data,plot,serviceAuxiliary(o,key),caption,E('span','상세 보기 →','service-card-link'));wire(card,()=>go('services',null,key));root.append(card)}const logs=lokiStatus(o),loki=$('.loki-status');loki.replaceChildren(E('b','로그 저장소 · Loki'),E('span',logs.label+(logs.latest?' · 최근 로그 '+date(logs.latest)+' (KST)':'')),button('로그 분석 →',()=>go('logs')));}
+function publicProbeTiming(probe){
+ return Number.isFinite(probe?.duration_ms)?fmt(probe.duration_ms,3)+' ms':'응답시간 미확인';
+}
+function renderServices(o){const root=$('.services');root.replaceChildren(E('h3','직원 포털 A','service-metric-group-title'));for(const key of ['app','database','proxy','homepage','community']){const entry=publicRequestPaths[key],def=servicePerformanceDefinition(key),metric=serviceMetric(o,key),card=E('article',undefined,'service service-'+key),head=E('div',undefined,'svc-head'),identity=E('div',undefined,'service-identity'),icon=E('span',undefined,'service-icon');icon.append(uiIcon(entry?'app':key));const names=E('div');names.append(E('strong',def.name),E('small',def.target));identity.append(icon,names);head.append(identity);const data=E('div',undefined,'svc-data');data.append(E('strong',entry?publicLatencyText(o,key,metric):metric?.status==='no_data'?'미수집':metricText(metric,'ms')));const plot=E('div',undefined,'service-chart');servicePlot(plot,metric?.points,def.color,def.label,true);const caption=E('div',undefined,'svc-caption');caption.append(E('span',(o?.historical?'선택 구간 ':'최근 ')+(o?.window_minutes||'미확인')+'분 · '+date(o?.as_of)+' (KST)'),E('span','지표 수집: '+(metric?.status==='ok'?'표본 확인':entry&&!metric?'미수집':name(metric?.status||'no_data'))));if(key==='proxy'){
+ const reasons=[...new Set(['proxy_p95','proxy_requests','proxy_errors'].map(k=>o?.details?.[k]?.failure_reason).filter(Boolean))];
+ if(reasons.length)caption.append(E('span',reasons.join(' · ')));
+ }
+ if(entry){
+ const {probe,kind}=publicProbe(o,entry.checks[0][3]);
+ caption.append(E('span','현재 /health 점검 · '+serviceStatusLabels[kind]+' · '+publicProbeTiming(probe)+
+  (probe?.checked_at?' · '+date(probe.checked_at)+' (KST)':'') ));
+ }
+ const last=metricPoints(metric?.points).at(-1);if(entry&&last&&metric?.status!=='ok')caption.append(E('span','마지막 p95 '+fmt(last[1],3)+' ms · '+date(last[0])+' (KST)'));card.append(head,E('p',def.label,'svc-label'),data,plot,serviceAuxiliary(o,key),caption,E('span','상세 보기 →','service-card-link'));wire(card,()=>go('services',null,key));root.append(card)}const logs=lokiStatus(o),loki=$('.loki-status');loki.replaceChildren(E('b','로그 저장소 · Loki'),E('span',logs.label+(logs.latest?' · 최근 로그 '+date(logs.latest)+' (KST)':'')),button('로그 분석 →',()=>go('logs')));}
 
 function resourceValues(points){return (points||[]).filter(p=>Number.isFinite(p[0])&&Number.isFinite(p[1])&&p[1]>=0&&p[1]<=100)}
 function resourceBounds(values,zoom){if(!zoom||!values.length)return [0,100];const lo=Math.min(...values.map(p=>p[1])),hi=Math.max(...values.map(p=>p[1])),pad=Math.max((hi-lo)*.2,.02);return [Math.max(0,lo-pad),Math.min(100,hi+pad)]}
@@ -638,7 +650,7 @@ function publicServiceCheckHistory(o,entry){
  for(const [, , label,job] of entry.checks){
   const {probe,kind}=publicProbe(o,job),row=E('li');
   row.append(E('span',label+' '),serviceStatusBadge(kind),
-   E('p','최근 점검 '+(probe?.checked_at?date(probe.checked_at)+' (KST)':'미확인'),'read-muted'));
+   E('p','최근 점검 '+(probe?.checked_at?date(probe.checked_at)+' (KST)':'미확인')+' · '+publicProbeTiming(probe),'read-muted'));
   checks.append(row);
  }
  section.append(checks,button('요청 로그 보기 →',()=>go('logs')));

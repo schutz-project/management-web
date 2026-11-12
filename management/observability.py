@@ -212,6 +212,9 @@ class Observer:
         tasks['scrape_targets']=prom(SCRAPE_TARGET_QUERY,current=True)
         tasks['scrape_metadata']=scrape_metadata()
         probe = 'probe_success{job=~"homepage-health|homepage-organization|community-health|community-questions"}'
+        duration=probe.replace('probe_success','probe_duration_seconds',1)
+        tasks['service_probe_durations']=prom(
+            duration+' and (timestamp('+duration+') == timestamp('+probe+'))',current=True)
         tasks['service_probes']=prom(probe,current=True)
         tasks['service_probe_times']=prom('timestamp('+probe+')',current=True)
         results=await asyncio.gather(*tasks.values(),return_exceptions=True); data=dict(zip(tasks,results))
@@ -277,20 +280,58 @@ class Observer:
         hosts=host_inventory(nodes,targets,isinstance(source,Exception))
         def series(key,label):
             rows=data['detail_'+key]
-            if isinstance(rows,Exception): return {'status':'unavailable','items':[]}
+            if isinstance(rows,Exception):
+                detail={'status':'unavailable','items':[]}
+                if key in DETAIL_LOKI:
+                    if isinstance(rows,(TimeoutError,httpx.TimeoutException)):
+                        detail['failure_reason']='Loki 조회 시간 초과'
+                    elif isinstance(rows,httpx.HTTPStatusError):
+                        detail['failure_reason']=f'Loki HTTP {rows.response.status_code}'
+                    else:
+                        detail['failure_reason']='Loki 응답 확인 실패'
+                return detail
             items=[]
             for row in rows[:30]:
                 metric=row.get('metric',{})
                 route=metric.get(label,'')
                 if route not in ROUTES: route='other'
                 points=[]
-                for stamp,value in row.get('values',[])[-MAX_POINTS:]:
-                    points.append([float(stamp)*1000,number(value)])
-                if points and points[-1][0]/1000 >= end-max(60,step):
-                    items.append({'route':route,'value':points[-1][1],'points':points})
+                for stamp,value in row.get('values',[]):
+                    seconds=float(stamp)
+                    if key in DETAIL_LOKI and not start<=seconds<=end:
+                        continue
+                    points.append([seconds*1000,number(value)])
+                points=points[-MAX_POINTS:]
+                if points:
+                    recent=points[-1][0]/1000 >= end-max(60,step)
+                    if recent or key in DETAIL_LOKI:
+                        items.append({'route':route,'value':points[-1][1] if recent else None,'points':points})
             items.sort(key=lambda item:(item['route'], item['value'] is None))
             return {'status':'ok','items':items[:12]}
         details={key:series(key,'http_route' if key in DETAIL_PROM else 'route') for key in (*DETAIL_PROM,*DETAIL_LOKI)}
+        proxy_errors=details['proxy_errors']
+        proxy_requests=details['proxy_requests']
+        if proxy_errors['status']=='ok' and proxy_requests['status']=='ok':
+            # An empty error series is zero only where the same route had observed requests.
+            errors_by_route={item['route']:item for item in proxy_errors['items']}
+            for request in proxy_requests['items']:
+                route=request['route']
+                if route=='other':
+                    continue
+                existing=errors_by_route.get(route)
+                points=dict(existing['points']) if existing else {}
+                for stamp,value in request['points']:
+                    if value is not None and value>0:
+                        points.setdefault(stamp,0)
+                if not points:
+                    continue
+                ordered=sorted(points.items())[-MAX_POINTS:]
+                if existing is None:
+                    existing={'route':route}
+                    proxy_errors['items'].append(existing)
+                existing.update(points=ordered,value=ordered[-1][1] if ordered[-1][0]/1000 >= end-max(60,step) else None)
+            proxy_errors['items'].sort(key=lambda item:item['route'])
+            proxy_errors['items']=proxy_errors['items'][:12]
         alerts=data['firing_alerts'];alert_rows=[]
         if not isinstance(alerts,Exception):
             for row in alerts[:20]:
@@ -308,11 +349,15 @@ class Observer:
             return values
 
         probe_states=probe_values(data['service_probes'])
+        probe_durations=probe_values(data['service_probe_durations'])
         probes={}
         for job,stamp in probe_values(data['service_probe_times']).items():
             value=probe_states.get(job)
             if value in (0,1) and stamp is not None and -5<=live_end-stamp<=60:
                 probes[job]={'success':value==1,'checked_at':datetime.fromtimestamp(stamp,timezone.utc).isoformat()}
+                duration=probe_durations.get(job)
+                if duration is not None and 0<=duration<=1e6:
+                    probes[job]['duration_ms']=duration*1000
         target_rows=[]
         metadata={}
         if isinstance(data['scrape_metadata'],list):

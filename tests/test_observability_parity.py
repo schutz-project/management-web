@@ -77,6 +77,30 @@ class ObservabilityParityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([row["job"] for row in snapshot["targets"]["items"]],
                          ["homepage-health", "homepage-organization", "community-health", "community-questions"])
 
+    async def test_public_probe_duration_is_exposed_only_with_fresh_status(self):
+        class TimedProbeClient(Client):
+            async def get(self, url, params):
+                query = (params or {}).get("query", "")
+                if query.startswith(("probe_success", "timestamp(probe_success", "probe_duration_seconds")):
+                    values = ("1", "1")
+                    if query.startswith("timestamp"):
+                        values = ("995", "900")
+                    elif query.startswith("probe_duration_seconds"):
+                        self.test_query = query
+                        values = ("0.025", "0.2")
+                    jobs = ("homepage-health", "community-health")
+                    return Response({"status": "success", "data": {"result": [
+                        {"metric": {"job": job}, "value": [1000, value]}
+                        for job, value in zip(jobs, values)
+                    ]}})
+                return await super().get(url, params)
+
+        client = TimedProbeClient()
+        probes = (await self.observer.collect(client, end=1000))["service_probes"]
+        self.assertEqual(probes["homepage-health"]["duration_ms"], 25)
+        self.assertNotIn("community-health", probes)
+        self.assertIn("== timestamp(probe_success", client.test_query)
+
     async def test_scrape_metadata_is_matched_without_exposing_raw_error(self):
         class ScrapeTransition(Client):
             def __init__(self, up, health, last_scrape):
@@ -117,9 +141,39 @@ class ObservabilityParityTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(row.get("failure_reason"), "연결 시간 초과" if matches and not up else None)
                 self.assertNotIn("internal-address", str(row))
 
+    async def test_empty_proxy_errors_are_zero_only_for_routes_with_requests(self):
+        class NoProxyErrors(Client):
+            async def get(self, url, params):
+                if "status >= 500" in (params or {}).get("query", ""):
+                    return Response({"status": "success", "data": {"result": []}})
+                return await super().get(url, params)
+
+        snapshot = await self.observer.collect(NoProxyErrors(), end=1000)
+        errors = snapshot["details"]["proxy_errors"]
+        self.assertEqual(errors["items"], [
+            {"route": "/health", "value": 0, "points": [(985000, 0), (995000, 0)]},
+        ])
+
+    async def test_proxy_samples_outside_requested_bounds_are_ignored(self):
+        class RoundedProxyRange(Client):
+            async def get(self, url, params):
+                if "/loki/" in url and "unwrap request_time" in params["query"]:
+                    return Response({"status": "success", "data": {"result": [
+                        {"metric": {"route": "/health"},
+                         "values": [[99, "0.001"], [995, "0.003"], [1653, "0.007"]]},
+                        {"metric": {"route": "/proxy-health"}, "values": [[1653, "0.008"]]},
+                    ]}})
+                return await super().get(url, params)
+
+        result = await self.observer.collect(RoundedProxyRange(), end=1000)
+        self.assertEqual(result["details"]["proxy_p95"]["items"], [
+            {"route": "/health", "value": 0.003, "points": [[995000, 0.003]]},
+        ])
+
     async def test_one_failed_query_does_not_hide_other_panels(self):
         snapshot = await self.observer.collect(Client(fail_proxy=True), end=1000)
         self.assertEqual(snapshot["details"]["proxy_p95"]["status"], "unavailable")
+        self.assertEqual(snapshot["details"]["proxy_p95"]["failure_reason"], "Loki 조회 시간 초과")
         self.assertEqual(snapshot["details"]["proxy_requests"]["status"], "ok")
         self.assertEqual(snapshot["alerts"]["status"], "ok")
 
