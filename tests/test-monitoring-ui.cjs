@@ -374,3 +374,18 @@ test('사용자 지정 대시보드가 사건 집계와 목록에 같은 기간�
  assert.equal(a.doc.querySelector('#incidents .panel-head h2').textContent,'선택 기간에 발생한 사건');
  assert.match(a.doc.querySelector('#incidents tbody').textContent,/모의.*응답 지연/);
 });
+
+
+test('사건 상세 제목과 그래프에 서비스 및 저장된 복구 확인 시각을 표시한다',async()=>{
+ const detected_at='2026-11-05T05:00:00Z',recovery_checked_at='2026-11-05T05:05:00Z',closed_at='2026-11-05T05:10:00Z';
+ for(const [job,label,verified] of [['portal-health','직원 포털 A',false],['homepage-health','홈페이지 B',true],['community-questions','커뮤니티 C',true],['ec2-node','서비스 미확인',false]]){
+  const a=boot({detail:{detected_at,closed_at,recovery_checked_at:verified?recovery_checked_at:null,monitoring:{labels:{job}}}});
+  await settle();a.doc.querySelector('#incidents tbody tr').dispatch('click');await settle();
+  assert(a.doc.querySelector('.incident-title-row h2').textContent.startsWith(label)||a.doc.querySelector('.incident-title-row h2').textContent.startsWith('[모의] '+label));
+  const timing=a.doc.querySelector('.incident-detail-timing'),lines=timing.querySelectorAll('line');
+  assert.equal(lines[1].getAttribute('stroke'),'#b4233d');
+  assert.equal(lines.length,verified?3:2);
+  if(verified){assert.equal(lines[2].getAttribute('stroke'),'#087851');assert.equal(lines[2].getAttribute('x1'),'50')}
+  assert.match(timing.textContent,verified?/복구 확인.*KST/:/복구 미확인/);
+ }
+});

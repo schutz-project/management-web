@@ -53,6 +53,34 @@ def create_app(settings=None,engine=None,metric_readers=None,observer=None,sessi
         same=state.incident_id==row.id
         fresh=bool(state.evaluated_at and -5<=(now()-utc(state.evaluated_at)).total_seconds()<=60)
         return {'source':'prometheus','alert_name':state.rule_name,'labels':state.labels,'state':state.state if same and fresh else 'unknown','last_evaluated_at':stamp(state.evaluated_at) if same else None,'recovery_confirmed':same and recovery_ready(db,row,now()),'target_display':state.rule_name+' / '+state.labels.get('job','portal')+' / '+state.labels.get('instance','전체')}
+    def incident_recoveries(db,selected,observed_until):
+        if not selected:
+            return {}
+        observations=db.execute(
+            select(IncidentEvidence.incident_id,Evidence.target_id,Evidence.occurred_at,Evidence.payload)
+            .join(Evidence,Evidence.id==IncidentEvidence.evidence_id)
+            .where(IncidentEvidence.incident_id.in_(selected),Evidence.kind=='prometheus',
+                   Evidence.occurred_at<=observed_until)
+            .order_by(IncidentEvidence.incident_id,Evidence.occurred_at,Evidence.id)
+        )
+        verified={}
+        last_normal={}
+        for incident_id,target_id,observed,payload in observations:
+            incident=selected[incident_id]
+            observed=utc(observed)
+            if (incident_id in verified or target_id!=incident.target_id
+                or payload.get('rule_id')!=incident.rule_id
+                or observed<utc(incident.detected_at)
+                or (incident.closed_at and observed>utc(incident.closed_at))):
+                continue
+            if payload.get('state')!='normal':
+                last_normal.pop(incident_id,None)
+                continue
+            previous=last_normal.get(incident_id)
+            if previous and 0<(observed-previous).total_seconds()<=60:
+                verified[incident_id]=observed
+            last_normal[incident_id]=observed
+        return verified
     def item(row,db=None):
         info=monitor_info(db,row) if db is not None else None
         result={**{k:getattr(row,k) for k in ['id','target_id','rule_id','status','synthetic','test_run_id','accepted_by','closed_by','resolution','version']},'detected_at':stamp(row.detected_at),'accepted_at':stamp(row.accepted_at),'closed_at':stamp(row.closed_at)}
@@ -135,30 +163,7 @@ def create_app(settings=None,engine=None,metric_readers=None,observer=None,sessi
             incidents=list(db.scalars(timeline_query))
             selected={incident.id:incident for incident in incidents[:20]}
             observed_until=min(upper,datetime.fromtimestamp(current,timezone.utc))
-            observations=db.execute(
-                select(IncidentEvidence.incident_id,Evidence.target_id,Evidence.occurred_at,Evidence.payload)
-                .join(Evidence,Evidence.id==IncidentEvidence.evidence_id)
-                .where(IncidentEvidence.incident_id.in_(selected),Evidence.kind=='prometheus',
-                       Evidence.occurred_at<=observed_until)
-                .order_by(IncidentEvidence.incident_id,Evidence.occurred_at,Evidence.id)
-            )
-            verified={}
-            last_normal={}
-            for incident_id,target_id,observed,payload in observations:
-                incident=selected[incident_id]
-                observed=utc(observed)
-                if (incident_id in verified or target_id!=incident.target_id
-                    or payload.get('rule_id')!=incident.rule_id
-                    or observed<utc(incident.detected_at)
-                    or (incident.closed_at and observed>utc(incident.closed_at))):
-                    continue
-                if payload.get('state')!='normal':
-                    last_normal.pop(incident_id,None)
-                    continue
-                previous=last_normal.get(incident_id)
-                if previous and 0<(observed-previous).total_seconds()<=60:
-                    verified[incident_id]=observed
-                last_normal[incident_id]=observed
+            verified=incident_recoveries(db,selected,observed_until)
             timeline=[]
             for incident in selected.values():
                 closed=utc(incident.closed_at)
@@ -214,7 +219,8 @@ def create_app(settings=None,engine=None,metric_readers=None,observer=None,sessi
             from management.incident_list import severity_expression
             severity=db.scalar(select(severity_expression()).where(Incident.id==id))
             from management.session_control import detail as control_detail
-            return {**item(row,db),'session_control':control_detail(db,row,app.state.settings),'severity':severity,'severity_source':'stored_prometheus_evidence' if severity else None,'evidence':[{'id':e.id,'kind':e.kind,'occurred_at':stamp(e.occurred_at),'payload':e.payload} for e in evidence],'jobs':jobs,'actions':[{'id':a.id,'kind':a.kind,'content':a.content,'actor_id':a.actor_id,'created_at':stamp(a.created_at)} for a in actions],'closure':{'eligible':not reasons,'reasons':reasons,'test_stop_confirmation_required':row.rule_id in {'login_failures','unauthorized_read','unauthorized_write'} or row.rule_id=='notification_delivery_test' and row.synthetic}}
+            recovery=incident_recoveries(db,{row.id:row},now()).get(row.id)
+            return {**item(row,db),'recovery_checked_at':stamp(recovery),'session_control':control_detail(db,row,app.state.settings),'severity':severity,'severity_source':'stored_prometheus_evidence' if severity else None,'evidence':[{'id':e.id,'kind':e.kind,'occurred_at':stamp(e.occurred_at),'payload':e.payload} for e in evidence],'jobs':jobs,'actions':[{'id':a.id,'kind':a.kind,'content':a.content,'actor_id':a.actor_id,'created_at':stamp(a.created_at)} for a in actions],'closure':{'eligible':not reasons,'reasons':reasons,'test_stop_confirmation_required':row.rule_id in {'login_failures','unauthorized_read','unauthorized_write'} or row.rule_id=='notification_delivery_test' and row.synthetic}}
     def conflict(): raise ApiError(409,'STATE_CONFLICT','사건 상태가 변경되었습니다. 새로고침해 주세요.')
     @app.post('/api/incidents/{id}/revoke-test-sessions')
     def revoke_sessions(id:str,request:Request):

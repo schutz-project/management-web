@@ -427,11 +427,39 @@ function evidencePanel(d){
 }
 function cacheIncidentDraft(id){const action=$('#action-content'),resolution=$('#resolution'),check=$('#test-stopped');const old=incidentDrafts.get(id)||{};incidentDrafts.set(id,{action:action?action.value:old.action||'',resolution:resolution?resolution.value:old.resolution||'',stopped:check?check.checked:old.stopped||false})}
 function restoreIncidentDraft(id){const draft=incidentDrafts.get(id);if(!draft)return;const action=$('#action-content'),resolution=$('#resolution'),check=$('#test-stopped');if(action)action.value=draft.action;if(resolution)resolution.value=draft.resolution;if(check){check.checked=draft.stopped;check.onchange?.()}if((!action&&draft.action)||(!resolution&&draft.resolution)){const saved=E('details');saved.append(E('summary','저장되지 않은 입력 보기'),E('p',draft.action||draft.resolution));$('#detail-body').append(saved)}}
+const incidentServiceLabels={a:'직원 포털 A',b:'홈페이지 B',c:'커뮤니티 C'};
+function incidentService(d){
+ const labels=d.monitoring?.labels;
+ const service=labels?.service;
+ const job=labels?.job||d.target_id;
+ if(service==='schutz-homepage'||['homepage-health','homepage-organization','homepage-request-metrics'].includes(job))return incidentServiceLabels.b;
+ if(service==='schutz-community'||['community-health','community-questions','community-request-metrics'].includes(job))return incidentServiceLabels.c;
+ if(['proxy','app','database','portal-login','portal-health','portal-db-health','portal-otel'].includes(job)||['unauthorized_read','unauthorized_write'].includes(d.rule_id))return incidentServiceLabels.a;
+ return '서비스 미확인';
+}
+function incidentTiming(d){
+ const box=E('section',undefined,'incident-detail-timing');
+ box.append(E('h3','장애 발생·복구 시점'));
+ const detected=Date.parse(d.detected_at),recovered=Date.parse(d.recovery_checked_at),closed=Date.parse(d.closed_at);
+ if(!Number.isFinite(detected)){box.append(E('p','장애 발생 시각 미제공','read-muted'));return box}
+ const verified=Number.isFinite(recovered)&&recovered>=detected&&(!Number.isFinite(closed)||recovered<=closed);
+ const span=Math.max(60000,(verified?recovered:detected)-detected,Number.isFinite(closed)?closed-detected:0);
+ const track=svg('svg',{viewBox:'0 0 100 16',preserveAspectRatio:'none','aria-hidden':'true'});
+ track.append(svg('line',{x1:5,x2:95,y1:8,y2:8,stroke:'#dbe6f4','stroke-width':2}));
+ track.append(svg('line',{x1:5,x2:5,y1:1,y2:15,stroke:'#b4233d','stroke-width':2,'vector-effect':'non-scaling-stroke'}));
+ if(verified){
+  const x=5+90*(recovered-detected)/span;
+  track.append(svg('line',{x1:x,x2:x,y1:1,y2:15,stroke:'#087851','stroke-width':2,'vector-effect':'non-scaling-stroke'}));
+ }
+ box.append(track,E('p','발생(탐지) '+contextDate(d.detected_at)+' (KST) · '+(verified?'복구 확인 '+contextDate(d.recovery_checked_at)+' (KST)':'복구 미확인'),'read-muted'));
+ return box;
+}
 function incidentDetail(d){
  const root=E('div',undefined,'incident-workspace'),jobs=d.jobs||[],ai=jobs.find(j=>j.kind==='ai');
  const nav=E('nav',undefined,'incident-detail-nav');nav.setAttribute('aria-label','사건 상세 이동');const back=button('← 목록으로 돌아가기',returnToIncidentList);back.className='incident-back outline';nav.append(back,button('화면 닫기',closeOverlay));root.append(nav);
- const header=E('section',undefined,'incident-detail-header'),heading=E('div',undefined,'incident-title-row');heading.append(E('h2',(d.synthetic?'[모의] ':'')+name(d.rule_id)),statusBadge(name(d.status),d.status==='closed'?'success':'info'),statusBadge(severityLabel(d.severity),d.severity==='critical'?'failed':d.severity==='warning'?'pending':'unknown'));root.append(header);header.append(heading,E('p',(d.target_display||name(d.target_id))+' · '+d.rule_id));
+ const header=E('section',undefined,'incident-detail-header'),heading=E('div',undefined,'incident-title-row');heading.append(E('h2',(d.synthetic?'[모의] ':'')+incidentService(d)+' · '+name(d.rule_id)),statusBadge(name(d.status),d.status==='closed'?'success':'info'),statusBadge(severityLabel(d.severity),d.severity==='critical'?'failed':d.severity==='warning'?'pending':'unknown'));root.append(header);header.append(heading,E('p',(d.target_display||name(d.target_id))+' · '+d.rule_id));
  const idRow=E('div',undefined,'incident-id-row'),input=E('textarea');input.rows=2;input.value=d.id;input.readOnly=true;input.setAttribute('aria-label','전체 사건 ID');const copied=E('p',undefined,'read-muted');copied.setAttribute('role','status');const copy=button('ID 복사',()=>copyIncidentID(d.id,copy,copied,input));idRow.append(E('b','사건 ID'),input,copy);header.append(idRow,copied,E('p','탐지 '+contextDate(d.detected_at)+' · 종료 '+contextDate(d.closed_at)+' (KST)','read-muted'));
+ header.append(incidentTiming(d));
  const upper=E('div',undefined,'incident-detail-overview'),guide=E('section',undefined,'incident-judgement');guide.append(E('h3','운영 판단 안내'),E('p','경보 상태, AI 분석, Slack 전송, 사건 종료는 각각 별도입니다. 관리자 근거 검토 후 접수·조치·종료합니다.','read-note'));upper.append(currentIncidentStatus(d),guide);root.append(upper);
  const context=incidentContext(d,ai);context.append(E('p','과거 이력 기능 상태 미확인 · Web 응답만으로 Worker 설정을 확정하지 않습니다.','read-muted'));root.append(context);
  const grid=E('div',undefined,'incident-detail-grid');grid.append(renderAIJob(ai),renderSlackJobs(jobs,d));root.append(grid,evidencePanel(d));
