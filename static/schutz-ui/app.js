@@ -432,7 +432,7 @@ const incidentDrafts=new Map(),incidentParents=new Map();
 function returnToIncidentList(){if(state.busy)return;state.overlay=null;detail.close();state.view='incidents';remember();Promise.resolve(loadView()).then(()=>window.scrollTo?.({top:state.listScroll,behavior:'instant'}))}
 async function openIncident(id){
  if(state.busy)return;const key='incident-'+id,previous=state.overlay?.startsWith('incident-')?state.overlay.slice(9):null;
- if(!previous)state.listScroll=window.scrollY||0;if(previous&&previous!==id)incidentParents.set(id,previous);
+ if(!previous){state.listScroll=window.scrollY||0;incidentSections.delete(id)}else if(previous!==id)incidentParents.set(id,previous);
  if(state.overlay&&state.overlay!==key){state.overlay=null;detail.close()}
  modal('사건 상세','조회 중…',key);const generation=state.generation;
  const rows=await Promise.allSettled([api('/api/incidents/'+encodeURIComponent(id)),api('/api/dashboard')]);
