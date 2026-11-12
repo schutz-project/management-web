@@ -60,7 +60,7 @@ async function refreshPermissions(){
  try{const c=await api('/api/management/capabilities');state.mode.writes_enabled=c.mode==='live'&&c.writes_enabled===true}catch{}
 }
 async function enter(){await refreshPermissions();if(!state.user)return;app.hidden=false;$('#auth-screen').hidden=true;$('.profile').textContent=state.user.username+' ▾';dash.hidden=false;
- remember(false);await loadView();await restoreOverlay();clearInterval(state.timer);state.timer=setInterval(()=>{if(state.window==='live'&&!document.hidden&&!state.busy&&!detail.open)loadView()},30000);
+ remember(false);await loadView();await restoreOverlay();clearInterval(state.timer);state.timer=setInterval(refreshAutomatically,15000);
 }
 $('#login-form').onsubmit=async e=>{e.preventDefault();if(state.busy)return;state.busy=true;$('#login-button').disabled=true;
  try{if(!state.csrf)await restoreContext(false);const data=await api('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':state.csrf},body:JSON.stringify({username:$('#username').value.trim(),password:$('#password').value})});state.user=data.user;state.csrf=data.csrf_token;if(state.user?.role!=='admin'){signedOut('관리자 계정으로 로그인해 주세요.');return}await enter()}
@@ -146,7 +146,41 @@ function openCalendar(){
 $('#refresh').onclick=()=>loadView();wire($('.notify'),()=>toggleAlerts());
 function observationParams(){const params=new URLSearchParams({window:state.window==='live'?'15m':state.window});if(state.window==='custom'&&state.customRange){params.set('start',state.customRange.start);params.set('end',state.customRange.end)}return params}
 async function getObservation(){return api('/api/observability?'+observationParams())}
-async function loadView(){if(!state.user)return;const g=++state.generation;feedback('조회 중…');dash.hidden=state.view!=='dashboard';page.hidden=state.view==='dashboard';page.replaceChildren();closeAlerts();$('.heading h1').textContent={dashboard:'운영 대시보드',incidents:'사건 관리',services:'서비스 모니터링',resources:'서버 리소스',collectors:'수집 상태',logs:'로그 분석',settings:'설정'}[state.view];
+let automaticRefreshPending=false, viewRequests=0;
+async function refreshAutomatically(){
+ if(!state.user||state.mode.mode==='snapshot'||document.hidden||state.busy||automaticRefreshPending||viewRequests||state.view==='settings')return;
+ automaticRefreshPending=true;
+ try{
+  if(detail.open){
+   const id=state.overlay?.startsWith('incident-')&&state.overlay.slice(9);
+   if(!id||!$('.incident-detail-header'))return;
+   const generation=state.generation;
+   const d=await api('/api/incidents/'+encodeURIComponent(id));
+   if(!detail.open||state.overlay!=='incident-'+id||state.generation!==generation||state.busy)return;
+   const jobs=d.jobs||[];
+   for(const [selector,render] of [
+    ['.incident-ai-card',()=>renderAIJob(jobs.find(j=>j.kind==='ai'))],
+    ['.incident-slack-card',()=>renderSlackJobs(jobs,d)],
+   ]){
+    const node=$(selector);
+    if(!node||node.contains(document.activeElement)||node.querySelector('details[open]'))continue;
+    node.replaceWith(render());
+   }
+   const summary=$('.incident-first-summary');
+   if(summary&&!summary.contains(document.activeElement)){
+    const analysis=$$('.incident-detail-tabs button').find(b=>b.getAttribute('aria-controls')==='incident-section-analysis');
+    summary.replaceWith(incidentSummary(d,jobs.find(j=>j.kind==='ai'),()=>analysis?.click()));
+   }
+   const timing=$('.incident-detail-timing');
+   if(timing&&timing.dataset.recovery!==(d.recovery_checked_at||''))timing.replaceWith(incidentTiming(d));
+  }else if(alertPanel.hidden&&state.view==='dashboard')await loadView(true);
+ }catch{}finally{automaticRefreshPending=false}
+}
+async function loadView(background=false){
+ viewRequests++;
+ try{await renderView(background)}finally{viewRequests--}
+}
+async function renderView(background){if(!state.user)return;const g=++state.generation;if(!background)feedback('조회 중…');dash.hidden=state.view!=='dashboard';page.hidden=state.view==='dashboard';if(!background){page.replaceChildren();closeAlerts();}$('.heading h1').textContent={dashboard:'운영 대시보드',incidents:'사건 관리',services:'서비스 모니터링',resources:'서버 리소스',collectors:'수집 상태',logs:'로그 분석',settings:'설정'}[state.view];
  $$('.nav>a').forEach((a,i)=>a.classList.toggle('active',views[i]===state.view));$$('.periods button').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.window===state.window)));
  try{
  const dashboardRequest=api('/api/dashboard'), observationRequest=getObservation();
@@ -168,7 +202,7 @@ async function loadView(){if(!state.user)return;const g=++state.generation;feedb
  }else{if(res[0].status==='rejected')throw res[0].reason;state.data=res[0].value;if(state.view==='services'){state.dashboard=res[1].status==='fulfilled'?res[1].value:null;showServices(state.data);}else if(state.view==='resources')showResources(state.data);else if(state.view==='collectors')showCollectors(state.data);else if(state.view==='logs')showLogs(state.data)}
  if(g!==state.generation||!state.user)return;const failed=res.some(r=>r.status==='rejected');feedback(failed?'일부 조회에 실패했습니다. 실패 항목은 미확인으로 표시합니다.':modeNote(),failed);
  }catch(e){if(g!==state.generation)return;feedback(e.message,true);if(!page.hidden)page.append(E('p','데이터를 가져오지 못했습니다. 새로고침으로 다시 확인해 주세요.'))}}
-function modeNote(){if(state.window==='custom')return '사용자 지정 기간 · '+date(state.customRange?.start)+' ~ '+date(state.customRange?.end)+' (KST) · 사건 집계·목록과 과거 지표에 적용 · 상단 상태·경보·최근 로그는 현재 조회 기준';return state.mode.mode==='snapshot'?'저장 데이터 모드 · '+date(state.data?.as_of||state.mode.as_of)+' (KST) · 실시간 아님':(state.window==='live'?'30초마다 조회 · ':'')+'한국 시간(KST) · '+(state.mode.writes_enabled?'조회·사건 처리 연결':'조회 전용 · 사건 변경 비활성화')}
+function modeNote(){if(state.window==='custom')return '사용자 지정 기간 · '+date(state.customRange?.start)+' ~ '+date(state.customRange?.end)+' (KST) · 사건 집계·목록과 과거 지표에 적용 · 상단 상태·경보·최근 로그는 현재 조회 기준';return state.mode.mode==='snapshot'?'저장 데이터 모드 · '+date(state.data?.as_of||state.mode.as_of)+' (KST) · 실시간 아님':(state.view==='dashboard'?'15초마다 자동 조회 · ':'')+'한국 시간(KST) · '+(state.mode.writes_enabled?'조회·사건 처리 연결':'조회 전용 · 사건 변경 비활성화')}
 const NS='http://www.w3.org/2000/svg';function svg(t,a,text){const e=document.createElementNS(NS,t);for(const[k,v]of Object.entries(a))e.setAttribute(k,v);if(text!==undefined)e.textContent=text;return e}
 function chart(holder,points,color,ceiling=null){holder.replaceChildren();const data=points||[],values=data.filter(p=>Number.isFinite(p[1]));if(!values.length){holder.append(E('small','그래프 데이터 없음'));return}const resource=ceiling!==null,w=resource?280:150,h=resource?110:36,l=resource?34:3,r=8,t=12,b=resource?22:4,max=ceiling||Math.max(...values.map(p=>p[1]),.001),start=data[0][0],end=data.at(-1)[0];const X=x=>l+(x-start)/(end-start||1)*(w-l-r),Y=y=>t+(1-y/max)*(h-t-b);const s=svg('svg',{viewBox:`0 0 ${w} ${h}`,width:'100%',height:'100%',role:'img','aria-label':resource?'사용률 0~100% · 실제 조회 표본':'실제 조회 표본 추이'});
  if(resource){for(const v of [0,50,100]){s.append(svg('line',{x1:l,x2:w-r,y1:Y(v),y2:Y(v),stroke:'#e1e9f3'}));s.append(svg('text',{x:0,y:Y(v)+3,'font-size':10,fill:'#6e85a1'},v+'%'))}for(const v of [start,end])s.append(svg('text',{x:X(v),y:h-3,'text-anchor':v===start?'start':'end','font-size':10,fill:'#6e85a1'},clock(v)))}
@@ -181,7 +215,7 @@ function renderDashboard(d,o,overview){
  $('.side-status').replaceChildren(E('div','시스템 상태'),E('p',!d?'미확인':known?'기능 점검 정상':'점검 확인 필요'),E('div','조회 시각'),E('p',date(d?.as_of||o?.as_of)));
  const targets=o?.targets?.status==='ok'?o.targets.items:null;const vals=[c?.new,c?c.accepted+c.in_progress:null,c?.closed,targets?targets.filter(t=>t.up).length+' / '+targets.length:null];const notes=['관리자 대응 대기','접수 · 조치 진행','전체 종료 이력','Prometheus 수집 대상'];
  $$('.kpi').forEach((e,i)=>{e.querySelector('strong').textContent=vals[i]===undefined||vals[i]===null?'미확인':String(vals[i])+(i<3?' 건':'');e.querySelector('div:nth-child(2)>small').textContent=notes[i];wire(e,()=>go(i===3?'collectors':'incidents',i===2?'closed':'open'))});$$('.kpi')[2].querySelector('h3').textContent='종료 사건 이력';renderNotificationIndicators(d,o);
- renderServiceHealth(servers,o);renderMonitoringPaths(servers,o);renderServices(o);renderResources(o);renderIncidentOverview(overview);renderIncidentTimeline(overview);renderCollectorPreview(o);$('.footer p:last-child').textContent=modeNote();
+ renderServiceHealth(servers,o);renderMonitoringPaths(servers,o,d?.processing);renderServices(o);renderResources(o);renderIncidentOverview(overview);renderIncidentTimeline(overview);renderCollectorPreview(o);$('.footer p:last-child').textContent=modeNote();
  $('#incidents .panel-head a').onclick=e=>{e.preventDefault();go('incidents')};$('#incidents .panel-head .link').textContent='분석 이력 →';$('#incidents .panel-head .link').onclick=()=>go('incidents','closed');
  wire($('.resources .panel-head .link'),()=>go('resources'));
 }
@@ -244,7 +278,7 @@ function metricText(metric,unit){return metric?.status==='ok'&&Number.isFinite(m
 function publicMetricText(metric,unit){
  return !metric||metric.status==='no_data'?'미수집':metricText(metric,unit);
 }
-function auxiliary(o,key){if(publicRequestPaths[key])return [['요청량',publicMetricText(o?.metrics?.[key+'_requests'],'건/초')],['5xx 서버 오류',publicMetricText(o?.metrics?.[key+'_errors'],'건/초')]];const m=o?.metrics||{},p=o?.details,route=k=>{const d=p?.[k],r=d?.items?.find(x=>x.route==='/health');return {status:d?.status==='ok'&&Number.isFinite(r?.value)?'ok':d?.status||'no_data',value:r?.value}};return key==='app'?[['요청량',metricText(m.requests,'건/초'),m.requests],['5xx 서버 오류',metricText(m.errors,'건/초'),m.errors]]:key==='database'?[['연결 수','미수집',null],['활성 세션','미수집',null]]:[['/health 요청량',metricText(route('proxy_requests'),'건/초'),null],['/health 5xx',metricText(route('proxy_errors'),'건/초'),null]]}
+function auxiliary(o,key){if(publicRequestPaths[key])return [['요청량',publicMetricText(o?.metrics?.[key+'_requests'],'건/초')],['5xx 서버 오류',publicMetricText(o?.metrics?.[key+'_errors'],'건/초')]];const m=o?.metrics||{},p=o?.details,route=k=>{const d=p?.[k],r=d?.items?.find(x=>x.route==='/health');return {status:d?.status==='ok'&&Number.isFinite(r?.value)?'ok':d?.status||'no_data',value:r?.value}};return key==='app'?[['요청량',metricText(m.requests,'건/초'),m.requests],['5xx 서버 오류',metricText(m.errors,'건/초'),m.errors]]:key==='database'?[['연결 수','수집 미설정',null],['활성 세션','수집 미설정',null]]:[['/health 요청량',metricText(route('proxy_requests'),'건/초'),null],['/health 5xx',metricText(route('proxy_errors'),'건/초'),null]]}
 function metricPoints(points){return (points||[]).filter(p=>Number.isFinite(p[0])&&Number.isFinite(p[1])&&p[1]>=0)}
 function serviceStats(points){const values=metricPoints(points).map(p=>p[1]);if(!values.length)return {mean:null,max:null,min:null,std:null,count:0};const mean=values.reduce((a,b)=>a+b,0)/values.length;return {mean,max:Math.max(...values),min:Math.min(...values),std:Math.sqrt(values.reduce((a,b)=>a+(b-mean)**2,0)/values.length),count:values.length}}
 function servicePlot(holder,points,color,label,compact=false,zoom=false,events=null){holder.replaceChildren();const data=points||[],valid=metricPoints(data);if(!valid.length){holder.append(E('p','데이터 없음 · 시계열 미수집 또는 조회 실패','read-muted'));return}const values=valid.map(p=>p[1]),low=Math.min(...values),high=Math.max(...values),pad=Math.max((high-low)*.2,.02),min=zoom?Math.max(0,low-pad):0,rawMax=zoom?high+pad:Math.max(high*1.1,.001),power=10**Math.floor(Math.log10(rawMax)),max=zoom?rawMax:Math.ceil(rawMax/power)*power,w=compact?320:900,h=compact?140:290,l=compact?40:60,r=12,t=15,b=26,start=events?.start??data[0][0],end=events?.end??data.at(-1)[0],X=x=>l+(x-start)/(end-start||1)*(w-l-r),Y=y=>t+(max-y)/(max-min)*(h-t-b);holder.append(E('p',(zoom?'변화 확대 ':'전체 표시 범위 ')+fmt(min,3)+'~'+fmt(max,3)+' ms','service-axis'));const s=svg('svg',{viewBox:`0 0 ${w} ${h}`,width:'100%',height:h,role:'img','aria-label':label+' '+fmt(min,3)+'~'+fmt(max,3)+' ms · 실제 p95 표본'});if(events?.recovered!=null)s.append(svg('rect',{x:X(events.detected),y:t,width:X(events.recovered)-X(events.detected),height:h-b-t,fill:'#fbe8ed'}));for(const v of [min,(min+max)/2,max])s.append(svg('line',{x1:l,x2:w-r,y1:Y(v),y2:Y(v),stroke:'#e3edf7'}),svg('text',{x:l-5,y:Y(v)+3,'text-anchor':'end','font-size':10,fill:'#6982a1'},fmt(v,2)));for(const v of [start,end])s.append(svg('text',{x:X(v),y:h-5,'text-anchor':v===start?'start':'end','font-size':10,fill:'#6982a1'},clock(v)));let segment=[],prev=null;const draw=()=>{if(segment.length){const coords=segment.map(p=>X(p[0])+','+Y(p[1])).join(' ');s.append(svg('polygon',{points:X(segment[0][0])+','+Y(min)+' '+coords+' '+X(segment.at(-1)[0])+','+Y(min),fill:color,'fill-opacity':.1}),svg('polyline',{points:coords,fill:'none',stroke:color,'stroke-width':2.5}))}segment=[]};for(const p of data){if(!Number.isFinite(p[1])||p[1]<0||(prev!==null&&p[0]-prev>(events?.step||state.data?.step_seconds||30)*1500))draw();if(Number.isFinite(p[1])&&p[1]>=0)segment.push(p);prev=p[0]}draw();if(events){
@@ -254,7 +288,19 @@ function servicePlot(holder,points,color,label,compact=false,zoom=false,events=n
  }
 }holder.append(s);if(compact)return;const dot=svg('circle',{r:4,fill:color}),cross=svg('line',{y1:t,y2:h-b,stroke:color,'stroke-dasharray':'3 3'});s.append(cross,dot);const output=E('output',undefined,'service-readout'),input=E('input',undefined,'service-scrubber');input.type='range';input.min=0;input.max=valid.length-1;input.value=valid.length-1;input.step=1;input.setAttribute('aria-label',label+' 시각별 표본 선택');const select=index=>{const p=valid[Math.max(0,Math.min(valid.length-1,index))];output.textContent=date(p[0])+' (KST) · '+fmt(p[1],3)+' ms';input.setAttribute('aria-valuetext',output.textContent);dot.setAttribute('cx',X(p[0]));dot.setAttribute('cy',Y(p[1]));cross.setAttribute('x1',X(p[0]));cross.setAttribute('x2',X(p[0]))};input.oninput=()=>select(Number(input.value));s.onpointermove=e=>{const rect=s.getBoundingClientRect(),when=start+Math.max(0,Math.min(1,(e.clientX-rect.left-l*rect.width/w)/((w-l-r)*rect.width/w)))*(end-start);let index=0;valid.forEach((p,i)=>{if(Math.abs(p[0]-when)<Math.abs(valid[index][0]-when))index=i});input.value=index;select(index)};select(valid.length-1);holder.append(output,input);if(zoom)holder.append(E('p','확대 축은 미세 변화 확인용이며 장애 임계치가 아닙니다.','read-muted'))}
 function serviceAuxiliary(o,key){const grid=E('div',undefined,'service-aux');for(const [label,value]of auxiliary(o,key)){const item=E('div');item.append(E('span',label),E('strong',value));grid.append(item)}return grid}
-function renderServices(o){const root=$('.services');root.replaceChildren(E('h3','직원 포털 A','service-metric-group-title'));for(const key of ['app','database','proxy','homepage','community']){const entry=publicRequestPaths[key],def=servicePerformanceDefinition(key),metric=serviceMetric(o,key),card=E('article',undefined,'service service-'+key),head=E('div',undefined,'svc-head'),identity=E('div',undefined,'service-identity'),icon=E('span',undefined,'service-icon');icon.append(uiIcon(entry?'app':key));const names=E('div');names.append(E('strong',def.name),E('small',def.target));identity.append(icon,names);head.append(identity);const data=E('div',undefined,'svc-data');data.append(E('strong',entry?publicMetricText(metric,'ms'):metric?.status==='no_data'?'미수집':metricText(metric,'ms')));const plot=E('div',undefined,'service-chart');servicePlot(plot,metric?.points,def.color,def.label,true);const caption=E('div',undefined,'svc-caption');caption.append(E('span',(o?.historical?'선택 구간 ':'최근 ')+(o?.window_minutes||'미확인')+'분 · '+date(o?.as_of)+' (KST)'),E('span','지표 수집: '+(metric?.status==='ok'?'표본 확인':entry&&!metric?'미수집':name(metric?.status||'no_data'))));card.append(head,E('p',def.label,'svc-label'),data,plot,serviceAuxiliary(o,key),caption,E('span','상세 보기 →','service-card-link'));wire(card,()=>go('services',null,key));root.append(card)}const logs=o?.logs,ok=logs&&['portal-api','portal-nginx'].every(k=>logs[k]?.status==='ok'),loki=$('.loki-status');loki.replaceChildren(E('b','로그 저장소 · Loki'),E('span',ok?'최근 5분 로그 조회 성공 · 표시 '+Object.values(logs).reduce((n,v)=>n+v.items.length,0)+'건':'로그 조회 미확인'),button('로그 분석 →',()=>go('logs')));}
+function lokiStatus(o){
+ const results=['portal-api','portal-nginx','schutz-homepage','schutz-community'].map(key=>o?.logs?.[key]);
+ const successful=results.filter(result=>result?.status==='ok');
+ const rows=successful.flatMap(result=>result.items||[]);
+ const latest=rows.map(row=>row.collected_at).filter(Boolean).sort().at(-1);
+ const label=!successful.length?'조회 미확인':successful.length<results.length?'일부 조회 실패 ('+successful.length+'/'+results.length+' 성공)':rows.length?'조회 성공 · '+rows.length+'건':'조회 성공 · 최근 5분 표시할 로그 없음';
+ return {label,latest};
+}
+function publicLatencyText(o,key,metric){
+ const requests=o?.metrics?.[key+'_requests'];
+ return metric?.status==='no_data'&&requests?.status==='ok'&&requests.value===0?'최근 요청 없음':publicMetricText(metric,'ms');
+}
+function renderServices(o){const root=$('.services');root.replaceChildren(E('h3','직원 포털 A','service-metric-group-title'));for(const key of ['app','database','proxy','homepage','community']){const entry=publicRequestPaths[key],def=servicePerformanceDefinition(key),metric=serviceMetric(o,key),card=E('article',undefined,'service service-'+key),head=E('div',undefined,'svc-head'),identity=E('div',undefined,'service-identity'),icon=E('span',undefined,'service-icon');icon.append(uiIcon(entry?'app':key));const names=E('div');names.append(E('strong',def.name),E('small',def.target));identity.append(icon,names);head.append(identity);const data=E('div',undefined,'svc-data');data.append(E('strong',entry?publicLatencyText(o,key,metric):metric?.status==='no_data'?'미수집':metricText(metric,'ms')));const plot=E('div',undefined,'service-chart');servicePlot(plot,metric?.points,def.color,def.label,true);const caption=E('div',undefined,'svc-caption');caption.append(E('span',(o?.historical?'선택 구간 ':'최근 ')+(o?.window_minutes||'미확인')+'분 · '+date(o?.as_of)+' (KST)'),E('span','지표 수집: '+(metric?.status==='ok'?'표본 확인':entry&&!metric?'미수집':name(metric?.status||'no_data'))));const last=metricPoints(metric?.points).at(-1);if(entry&&last&&metric?.status!=='ok')caption.append(E('span','마지막 p95 '+fmt(last[1],3)+' ms · '+date(last[0])+' (KST)'));card.append(head,E('p',def.label,'svc-label'),data,plot,serviceAuxiliary(o,key),caption,E('span','상세 보기 →','service-card-link'));wire(card,()=>go('services',null,key));root.append(card)}const logs=lokiStatus(o),loki=$('.loki-status');loki.replaceChildren(E('b','로그 저장소 · Loki'),E('span',logs.label+(logs.latest?' · 최근 로그 '+date(logs.latest)+' (KST)':'')),button('로그 분석 →',()=>go('logs')));}
 
 function resourceValues(points){return (points||[]).filter(p=>Number.isFinite(p[0])&&Number.isFinite(p[1])&&p[1]>=0&&p[1]<=100)}
 function resourceBounds(values,zoom){if(!zoom||!values.length)return [0,100];const lo=Math.min(...values.map(p=>p[1])),hi=Math.max(...values.map(p=>p[1])),pad=Math.max((hi-lo)*.2,.02);return [Math.max(0,lo-pad),Math.min(100,hi+pad)]}
@@ -309,7 +355,7 @@ function renderResources(o){
   root.append(section);
  }
 }
-const roles={'ec2-node':'호스트 지표 (Alloy)','portal-otel':'앱 지표 (Alloy)',prometheus:'자체 상태','portal-db-health':'직원 조회 점검','homepage-health':'홈페이지 HTTP 점검','homepage-organization':'조직도 API 점검','community-health':'커뮤니티 HTTP 점검','community-questions':'질문 목록 API 점검'};
+const roles={'ec2-node':'호스트 지표 (Alloy)','portal-otel':'앱 지표 (Alloy)',prometheus:'자체 상태','portal-db-health':'직원 조회 점검','homepage-health':'홈페이지 HTTP 점검','homepage-organization':'조직도 API 점검','community-health':'커뮤니티 HTTP 점검','community-questions':'질문 목록 API 점검','homepage-request-metrics':'홈페이지 B · 요청 메트릭','community-request-metrics':'커뮤니티 C · 요청 메트릭'};
 function renderIncidents(tbody,rows,failed=false){tbody.replaceChildren();$('#incidents thead').innerHTML='<tr><th>발생 (KST)</th><th>구분</th><th>유형</th><th>대상</th><th>상태</th><th>AI 분석</th></tr>';
  if(!rows.length){const tr=E('tr'),td=E('td',failed?'사건 조회 실패':'사건이 없습니다.');td.colSpan=6;tr.append(td);tbody.append(tr)}
  for(const row of rows){const tr=E('tr');[date(row.detected_at),row.synthetic?'모의':'운영',name(row.rule_id),(row.target_display||name(row.target_id)),name(row.status),'상세 확인'].forEach(t=>tr.append(E('td',t)));wire(tr,()=>openIncident(row.id));tbody.append(tr)}}
@@ -341,7 +387,7 @@ async function showIncidentList(g){
  if(Number.isInteger(d.page_count)&&d.page_count>0&&state.page>d.page_count){state.page=d.page_count;remember(false);page.replaceChildren();await showIncidentList(g);return}
  for(const card of cards.children){const count=d.counts?.[card.dataset.state];card.querySelector('strong').textContent=Number.isInteger(count)?count+'건':'미확인'}
  const wrap=E('div',undefined,'incident-table-scroll'),table=E('table',undefined,'incident-table'),head=E('thead'),hr=E('tr');for(const label of ['발생 시각 (KST)','사건명 / 탐지 유형','대상','심각도','구분','사건 상태','AI 분석','Slack 알림','상세'])hr.append(E('th',label));head.append(hr);table.append(head);const body=E('tbody');
- for(const row of d.items){const tr=E('tr');tr.append(incidentListTime(row.detected_at));const title=E('td');title.append(E('b',name(row.rule_id)),E('small',row.monitoring?.alert_name||row.rule_id));tr.append(title,E('td',row.target_display||name(row.target_id)));const level=E('td');level.append(statusBadge(severityLabel(row.severity),row.severity==='critical'?'failed':row.severity==='warning'?'pending':'unknown'));tr.append(level);const mode=E('td');mode.append(statusBadge(row.synthetic?'모의':'실제',row.synthetic?'unknown':'info'));tr.append(mode);const status=E('td');status.append(statusBadge(name(row.status),row.status==='closed'?'success':row.status==='new'?'info':'pending'));tr.append(status);const ai=E('td');ai.append(taskBadge(row.jobs,'ai'));tr.append(ai);const slack=E('td');for(const[kind,label]of [['slack','최초'],['slack_ai','AI 완료'],['slack_recovery','복구'],['slack_closed','종료']]){const line=E('div',undefined,'list-slack-line');line.append(E('small',label),kind==='slack_recovery'&&['login_failures','unauthorized_read','unauthorized_write','notification_delivery_test','availability_failure','response_delay'].includes(row.rule_id)&&!row.jobs?.some(j=>j.kind===kind)?statusBadge('해당 없음','unknown'):taskBadge(row.jobs,kind));slack.append(line)}tr.append(slack);const action=E('td');action.append(button('상세 보기 →',()=>openIncident(row.id)));tr.append(action);body.append(tr)}
+ for(const row of d.items){const tr=E('tr');tr.append(incidentListTime(row.detected_at));const title=E('td');title.append(E('b',incidentService(row)+' · '+name(row.rule_id)),E('small',row.monitoring?.alert_name||row.rule_id));tr.append(title,E('td',row.target_display||name(row.target_id)));const level=E('td');level.append(statusBadge(severityLabel(row.severity),row.severity==='critical'?'failed':row.severity==='warning'?'pending':'unknown'));tr.append(level);const mode=E('td');mode.append(statusBadge(row.synthetic?'모의':'실제',row.synthetic?'unknown':'info'));tr.append(mode);const status=E('td');status.append(statusBadge(name(row.status),row.status==='closed'?'success':row.status==='new'?'info':'pending'));tr.append(status);const ai=E('td');ai.append(taskBadge(row.jobs,'ai'));tr.append(ai);const slack=E('td');for(const[kind,label]of [['slack','최초'],['slack_ai','AI 완료'],['slack_recovery','복구'],['slack_closed','종료']]){const line=E('div',undefined,'list-slack-line');line.append(E('small',label),kind==='slack_recovery'&&['login_failures','unauthorized_read','unauthorized_write','notification_delivery_test','availability_failure','response_delay'].includes(row.rule_id)&&!row.jobs?.some(j=>j.kind===kind)?statusBadge('해당 없음','unknown'):taskBadge(row.jobs,kind));slack.append(line)}tr.append(slack);const action=E('td');action.append(button('상세 보기 →',()=>openIncident(row.id)));tr.append(action);body.append(tr)}
  table.append(body);wrap.append(table);panel.append(wrap);
  if(!d.items.length)panel.append(E('p','현재 조건에 해당하는 사건이 없습니다.','read-note'));
  panel.append(E('p','현재 조건 총 '+(Number.isInteger(d.total)?d.total+'건':'미확인')+' · 이 페이지 '+d.items.length+'건 · '+(d.page_count===0?'페이지 없음':state.page+' / '+(Number.isInteger(d.page_count)?d.page_count:'미확인')+'페이지'),'incident-list-count'));
@@ -386,7 +432,7 @@ const incidentDrafts=new Map(),incidentParents=new Map();
 function returnToIncidentList(){if(state.busy)return;state.overlay=null;detail.close();state.view='incidents';remember();Promise.resolve(loadView()).then(()=>window.scrollTo?.({top:state.listScroll,behavior:'instant'}))}
 async function openIncident(id){
  if(state.busy)return;const key='incident-'+id,previous=state.overlay?.startsWith('incident-')?state.overlay.slice(9):null;
- if(!previous)state.listScroll=window.scrollY||0;if(previous&&previous!==id)incidentParents.set(id,previous);
+ if(!previous){state.listScroll=window.scrollY||0;incidentSections.delete(id)}else if(previous!==id)incidentParents.set(id,previous);
  if(state.overlay&&state.overlay!==key){state.overlay=null;detail.close()}
  modal('사건 상세','조회 중…',key);const generation=state.generation;
  const rows=await Promise.allSettled([api('/api/incidents/'+encodeURIComponent(id)),api('/api/dashboard')]);
@@ -450,6 +496,7 @@ function incidentService(d){
 }
 function incidentTiming(d){
  const box=E('section',undefined,'incident-detail-timing');
+ box.dataset.recovery=d.recovery_checked_at||'';
  box.append(E('h3','장애 발생·복구 시점'));
  const detected=Date.parse(d.detected_at),recovered=Date.parse(d.recovery_checked_at),closed=Date.parse(d.closed_at);
  if(!Number.isFinite(detected)){box.append(E('p','장애 발생 시각 미제공','read-muted'));return box}
@@ -487,22 +534,72 @@ function incidentTiming(d){
  }
  return box;
 }
+function incidentSummary(d,ai,showAnalysis){
+ const card=E('section',undefined,'incident-first-summary');
+ card.append(E('h3','확인된 내용'));
+ const monitor=d.monitoring;
+ const observation=d.rule_id==='monitoring_target_down'
+  ?'Prometheus 경보가 수집 대상의 연결 실패를 기록했습니다.'
+  :name(d.rule_id)+' 사건이 '+contextDate(d.detected_at)+' (KST)에 기록됐습니다.';
+ card.append(E('p',observation),E('p','실제 사용자 영향 · 확인된 정보 없음','read-muted'));
+ const title=E('div',undefined,'incident-card-head'),status=jobDisplay(ai,'ai');
+ title.append(E('h3','AI 핵심 요약'),statusBadge(status.label,status.tone));
+ card.append(title,E('p',typeof ai?.result?.summary==='string'?ai.result.summary:'저장된 분석 요약이 없습니다.','ai-summary-preview'));
+ const next=ai?.result?.next_checks?.find?.(item=>typeof item==='string');
+ if(next)card.append(E('p','우선 확인 · '+next));
+ if(monitor?.alert_name)card.append(E('small','탐지 출처 · Prometheus '+monitor.alert_name,'read-muted'));
+ const context=window.SchutzIncidentContext?.build?.(d,ai);
+ if(context?.known){
+  const count=value=>Number.isInteger(value)?value+'건':'미제공';
+  card.append(E('small','현재 근거 '+count(context.current.length)+' · 인용 '+count(context.currentCitations)+
+   ' / 과거 사례 '+count(context.histories.length)+' · 인용 '+count(context.historyCitations),'read-muted'));
+ }
+ if(context?.failureWindow){
+  const {first,last,count}=context.failureWindow;
+  card.append(E('small','관측된 실패 '+count+'건 · '+contextDate(first)+' ~ '+contextDate(last)+' (KST)','read-muted'));
+ }
+ card.append(button('AI 분석 보기',showAnalysis));
+ return card;
+}
+const incidentSections=new Map();
 function incidentDetail(d){
  const root=E('div',undefined,'incident-workspace'),jobs=d.jobs||[],ai=jobs.find(j=>j.kind==='ai');
  const nav=E('nav',undefined,'incident-detail-nav');nav.setAttribute('aria-label','사건 상세 이동');const back=button('← 목록으로 돌아가기',returnToIncidentList);back.className='incident-back outline';nav.append(back,button('화면 닫기',closeOverlay));root.append(nav);
  const header=E('section',undefined,'incident-detail-header'),heading=E('div',undefined,'incident-title-row');heading.append(E('h2',(d.synthetic?'[모의] ':'')+incidentService(d)+' · '+name(d.rule_id)),statusBadge(name(d.status),d.status==='closed'?'success':'info'),statusBadge(severityLabel(d.severity),d.severity==='critical'?'failed':d.severity==='warning'?'pending':'unknown'));root.append(header);header.append(heading,E('p',(d.target_display||name(d.target_id))+' · '+d.rule_id));
- const idRow=E('div',undefined,'incident-id-row'),input=E('textarea');input.rows=2;input.value=d.id;input.readOnly=true;input.setAttribute('aria-label','전체 사건 ID');const copied=E('p',undefined,'read-muted');copied.setAttribute('role','status');const copy=button('ID 복사',()=>copyIncidentID(d.id,copy,copied,input));idRow.append(E('b','사건 ID'),input,copy);header.append(idRow,copied,E('p','탐지 '+contextDate(d.detected_at)+' · 종료 '+contextDate(d.closed_at)+' (KST)','read-muted'));
- header.append(incidentTiming(d));
- const upper=E('div',undefined,'incident-detail-overview'),guide=E('section',undefined,'incident-judgement');guide.append(E('h3','운영 판단 안내'),E('p','경보 상태, AI 분석, Slack 전송, 사건 종료는 각각 별도입니다. 관리자 근거 검토 후 접수·조치·종료합니다.','read-note'));upper.append(currentIncidentStatus(d),guide);root.append(upper);
- const context=incidentContext(d,ai);context.append(E('p','과거 이력 기능 상태 미확인 · Web 응답만으로 Worker 설정을 확정하지 않습니다.','read-muted'));root.append(context);
- const grid=E('div',undefined,'incident-detail-grid');grid.append(renderAIJob(ai),renderSlackJobs(jobs,d));root.append(grid,evidencePanel(d));
+ const idRow=E('div',undefined,'incident-id-row'),input=E('textarea');input.rows=2;input.value=d.id;input.readOnly=true;input.setAttribute('aria-label','전체 사건 ID');const copied=E('p',undefined,'read-muted');copied.setAttribute('role','status');const copy=button('ID 복사',()=>copyIncidentID(d.id,copy,copied,input));idRow.append(E('b','사건 ID'),input,copy);const identifiers=E('details',undefined,'incident-identifiers');
+ identifiers.append(E('summary','사건 ID 및 복사'),idRow,copied);
+ header.append(identifiers,E('p','탐지 '+contextDate(d.detected_at)+' · 종료 '+contextDate(d.closed_at)+' (KST)','read-muted'));
+ const tabs=E('nav',undefined,'incident-detail-tabs');
+ tabs.setAttribute('aria-label','사건 상세 섹션');
+ const panels=E('div');
+ const sections={};
+ const controls={};
+ const previousSection=incidentSections.get(d.id);
+ function selectSection(key){
+  incidentSections.set(d.id,key);
+  for(const [id,panel] of Object.entries(sections)){
+   panel.hidden=id!==key;
+   controls[id].setAttribute('aria-pressed',String(id===key));
+  }
+ }
+ for(const [key,label] of [['summary','사건 요약'],['analysis','AI 분석'],['evidence','탐지 근거'],['actions','조치·알림']]){
+  const panel=E('div',undefined,'incident-detail-section');
+  panel.id='incident-section-'+key;
+  const control=button(label,()=>selectSection(key));
+  control.setAttribute('aria-controls',panel.id);
+  panels.append(panel);tabs.append(control);sections[key]=panel;controls[key]=control;
+ }
+ root.append(tabs,panels);selectSection(sections[previousSection]?previousSection:'summary');
+ sections.summary.append(incidentSummary(d,ai,()=>selectSection('analysis')),incidentTiming(d),currentIncidentStatus(d));
+ sections.analysis.append(renderAIJob(ai),incidentContext(d,ai));
+ sections.evidence.append(evidencePanel(d));
  const actions=E('section',undefined,'incident-action-section');actions.append(E('h3','접수 · 조치 기록'),E('p','초안은 제안이며 실제 수행 내용을 검토한 뒤 직접 저장합니다. 화면 닫기는 사건 종료가 아닙니다.','read-note'));
  const timeline=E('div',undefined,'incident-action-timeline');for(const a of d.actions||[])timeline.append(E('p',contextDate(a.created_at)+' · '+a.content));if(!d.actions?.length)timeline.append(E('p','저장된 처리 이력이 없습니다.','read-muted'));actions.append(timeline);
  const writable=state.mode.writes_enabled&&state.mode.mode!=='snapshot';
  if(!writable)actions.append(E('p','조회 전용입니다. 사건 상태와 조치 기록을 변경하지 않습니다.','notice'));
  else if(d.status==='new'){const accept=button('사건 접수',()=>mutate(d.id,'accept',{}));accept.classList.add('primary-action');actions.append(accept)}
  if(d.session_control?.eligible){const control=E('section');control.append(E('h3','시험 계정 세션 폐기'),E('p',d.session_control.notice,'read-note'));const op=d.session_control.operation;if(op)control.append(E('p',({succeeded:'서비스 폐기 확인',failed:'실행 실패',unknown:'실행 결과 미확인',pending:'실행 결과 확인 필요'}[op.status]||'미확인')+(op.revoked_count!==undefined?' · '+op.revoked_count+'건':'')+' · 실행 ID '+op.operation_id+(op.error_code?' · '+op.error_code:'')));if(writable&&d.session_control.enabled&&['accepted','in_progress'].includes(d.status)&&op?.status!=='succeeded'){const check=E('input');check.type='checkbox';const label=E('label');label.append(check,E('span','시험 계정 test_user의 기존 세션 폐기를 실행합니다.'));const run=button(op?'같은 실행 ID로 결과 재확인':'시험 세션 폐기 실행',()=>{if(check.checked)mutate(d.id,'revoke-test-sessions',{confirm_account:'test_user'})});run.disabled=true;check.onchange=()=>{run.disabled=!check.checked};control.append(label,run)}else if(!d.session_control.enabled)control.append(E('p','세션 폐기 연결 비활성화 · 실행되지 않습니다.','read-note'));actions.append(control)}
- if(writable&&['accepted','in_progress'].includes(d.status)){const form=E('form');form.append(E('label','조치 내용 (1~1000자)'));const field=E('textarea');field.id='action-content';field.maxLength=1000;field.required=true;field.setAttribute('aria-label','조치 내용');const save=button('조치 기록 저장',()=>form.requestSubmit());save.classList.add('primary-action');form.append(field,save);form.onsubmit=e=>{e.preventDefault();if(!field.value.trim()){feedback('조치 내용을 입력해주세요.',true);field.focus?.();return}mutate(d.id,'actions',{content:field.value})};actions.append(form)}root.append(actions);
+ if(writable&&['accepted','in_progress'].includes(d.status)){const form=E('form');form.append(E('label','조치 내용 (1~1000자)'));const field=E('textarea');field.id='action-content';field.maxLength=1000;field.required=true;field.setAttribute('aria-label','조치 내용');const save=button('조치 기록 저장',()=>form.requestSubmit());save.classList.add('primary-action');form.append(field,save);form.onsubmit=e=>{e.preventDefault();if(!field.value.trim()){feedback('조치 내용을 입력해주세요.',true);field.focus?.();return}mutate(d.id,'actions',{content:field.value})};actions.append(form)}sections.actions.append(actions);
  const closure=E('section',undefined,'incident-closure-section');closure.append(E('h3','복구 확인 · 사건 종료'));
  if(d.resolution)closure.append(E('p','저장된 종료 근거: '+d.resolution));
  if(writable&&d.status==='in_progress'){
@@ -513,7 +610,7 @@ function incidentDetail(d){
   const policy=E('p','서버가 권한·조치 기록·복구·시험 종료 조건을 최종 검증합니다.','read-muted');policy.id='closure-policy';form.append(policy,close);form.onsubmit=e=>{e.preventDefault();if(!eligible){feedback('종료 조건을 먼저 확인해주세요.',true);return}if(!field.value.trim()||(check&&!check.checked)){feedback('종료 근거와 시험 종료 확인을 입력해주세요.',true);return}const payload={resolution:field.value};if(check)payload.test_stopped=check.checked;mutate(d.id,'close',payload)};closure.append(form)
  }else if(d.status!=='closed')closure.append(E('p','접수와 조치 기록 후 복구 조건을 확인하고 종료할 수 있습니다.','read-muted'));
  if(['unauthorized_read','unauthorized_write'].includes(d.rule_id))closure.append(E('p','실패가 멈추고 사건이 종료되어도 정보 미노출·데이터 미변경·추가 차단 완료가 자동 증명되지는 않습니다. 시험 결과와 실제 조치를 별도로 기록하세요.','read-note'));
- root.append(closure);
+ sections.actions.append(closure,renderSlackJobs(jobs,d));
  modal('사건 상세',root);restoreIncidentDraft(d.id);if(window.SchutzDrafts&&writable)window.SchutzDrafts.attach(d,api);$('#detail-title').tabIndex=-1;$('#detail-title').focus?.();
 }
 async function mutate(id,kind,payload){
@@ -580,7 +677,7 @@ function showServices(o){const key=state.service,entry=publicRequestPaths[key],d
  if(entry){
   const status=serviceDetailStatus(o,servers,key);
   head.append(uiIcon('app'),E('h3',entry.label),serviceStatusBadge(status.kind));
-  panel.append(head,E('p','앱 응답시간 p95 (ms)','svc-label'),E('strong',publicMetricText(metric,'ms'),'service-main-value'));
+  panel.append(head,E('p','앱 응답시간 p95 (ms)','svc-label'),E('strong',publicLatencyText(o,key,metric),'service-main-value'));
  }else{
   head.append(uiIcon(key),E('h3',def.name+' · '+def.target),serviceBadge(servers,key));
   panel.append(head,E('p',def.label+' (ms)','svc-label'),E('strong',metric?.status==='no_data'?'미수집':metricText(metric,'ms'),'service-main-value'));
@@ -741,7 +838,7 @@ function targetLabel(t,o){
   const role=matches.length===1?matches[0].server_role:null;
   return {service:'서비스 서버 자원',monitoring:'모니터링 서버 자원'}[role]||'역할 미확인 서버 자원';
  }
- return {'portal-otel':'앱 서비스 지표',prometheus:'메트릭 저장소','portal-db-health':'직원 조회 점검','homepage-health':'회사 홈페이지 B · 헬스 체크','homepage-organization':'회사 홈페이지 B · 조직도 조회','community-health':'커뮤니티 C · 헬스 체크','community-questions':'커뮤니티 C · 질문 목록 조회'}[t.job]||t.job;
+ return {'portal-otel':'앱 서비스 지표',prometheus:'메트릭 저장소','portal-db-health':'직원 조회 점검','homepage-health':'회사 홈페이지 B · 헬스 체크','homepage-organization':'회사 홈페이지 B · 조직도 조회','community-health':'커뮤니티 C · 헬스 체크','community-questions':'커뮤니티 C · 질문 목록 조회','homepage-request-metrics':'홈페이지 B · 요청 메트릭','community-request-metrics':'커뮤니티 C · 요청 메트릭'}[t.job]||t.job;
 }
 function summaryCard(label,value){const card=E('article',undefined,'read-stat');card.append(E('p',label),E('strong',String(value)));return card}
 function collectorContent(o){
@@ -830,7 +927,7 @@ function showSettings(){
  const snapshot=state.mode.mode==='snapshot';page.append(E('h2','설정'),E('p','접속 환경 · 계정 · 데이터 표시 기준','read-muted'),E('div',snapshot?'저장 데이터 모드 · 실시간 서버 연결 없음':'기존 Management Web API 연결','read-note'));
  const grid=E('div',undefined,'settings-grid');grid.append(definitionPanel('연결 · 데이터',[['데이터 방식',snapshot?'저장본 조회':'실제 API 조회'],['조회 시각',date(state.data?.as_of||state.mode.as_of)],['시간대','한국 시간 · KST'],['지표 범위',{'live':'최근 15분','15m':'최근 15분','1h':'최근 1시간','6h':'최근 6시간','24h':'최근 24시간'}[state.window]],['자동 갱신',snapshot?'사용 안 함':state.window==='live'?'30초 간격':'수동 새로고침']]));
  const account=definitionPanel('계정 · 사용 범위',[['표시 계정',state.user.username],['사용 방식',state.mode.writes_enabled&&!snapshot?'조회·사건 처리':'조회 전용'],['사건 접수 · 조치 · 종료',state.mode.writes_enabled&&!snapshot?'사용 가능':'변경 불가'],['서버 로그인',snapshot?'사용하지 않음':'관리자 세션 사용']]);if(snapshot)account.append(E('p','저장본 모드에는 로그아웃할 서버 세션이 없습니다.','read-muted'));else account.append(button('로그아웃',logout));grid.append(account);page.append(grid,E('p','이 화면은 연결 정보 확인용입니다. 서버 설정·인증 정보를 변경하지 않습니다.','read-note'));
- const help=E('details',undefined,'read-help');help.append(E('summary','갱신 및 AI 결과 표시 기준'),E('p','실제 API 연결 후 실시간을 선택하면 30초마다 다시 조회합니다. 화면 조회로 AI 재분석이나 Slack 발송을 실행하지 않습니다.'),E('p','AI 결과는 서버에 저장된 원문을 표시합니다. 자동 번역은 별도 구현 전입니다.'));page.append(help)
+ const help=E('details',undefined,'read-help');help.append(E('summary','갱신 및 AI 결과 표시 기준'),E('p','운영 대시보드와 열린 사건의 분석·알림을 약 15초마다 다시 조회합니다. 화면 조회로 AI 재분석이나 Slack 발송을 실행하지 않습니다.'),E('p','AI 결과는 서버에 저장된 원문을 표시합니다. 자동 번역은 별도 구현 전입니다.'));page.append(help)
 }
 const alertPanel=E('section',undefined,'alert-popover');alertPanel.hidden=true;alertPanel.setAttribute('aria-label','경보 알림');header.append(alertPanel);const bell=$('.notify');bell.setAttribute('aria-expanded','false');
 let notificationDashboard=null,notificationObservation=null;
@@ -873,13 +970,13 @@ window.addEventListener('keydown',e=>{if(e.key==='Escape')closeAlerts()});window
 async function boot(){$('#auth-message').textContent='로그인 상태를 확인하고 있습니다…';$('#auth-retry').hidden=true;$('#login-form').hidden=true;
  try{try{const r=await fetch('/local/status',{cache:'no-store'});if(r.ok)state.mode={...await r.json(),local_mode:true}}catch{}if(state.mode.mode==='snapshot'){state.window='15m';$$('.periods button').forEach(b=>{b.disabled=b.dataset.window!=='15m'})}await restoreContext()}
  catch(e){app.hidden=true;$('#auth-screen').hidden=false;$('#auth-message').textContent='연결 확인 실패 · '+e.message;$('#auth-retry').hidden=false}}
-function renderMonitoringPaths(servers,o){
+function renderMonitoringPaths(servers,o,processingData){
  const root=$('.monitoring-paths');
  root.replaceChildren(E('h3','모니터링 시스템 상태'));
  const cards=E('div',undefined,'monitoring-path-grid');
  const external=E('article',undefined,'monitoring-path-card');
  external.append(E('h4','관리 웹 접근'),E('p','외부 점검 지점 → 관리 웹'),
-  E('strong','외부 점검 미연결'),E('small','마지막 성공 미제공'));
+  E('strong','외부 점검 데이터 미연결'));
  const proxy=E('article',undefined,'monitoring-path-card');
  const {row,kind}=serviceState(servers,'proxy');
  proxy.append(E('h4','포털 접근'),E('p','모니터링 서버 → 직원 포털'),
@@ -893,12 +990,17 @@ function renderMonitoringPaths(servers,o){
  proxy.append(E('small','최근 점검 '+(row?.last_checked_at?date(row.last_checked_at)+' (KST)':'미확인')));
  if(kind!=='normal')proxy.append(E('small','마지막 성공 시각 미제공'));
  const processing=E('article',undefined,'monitoring-path-card');
- processing.append(E('h4','사건·알림 처리'),E('p','Worker · Slack'),E('strong','처리 상태 미수집'));
+ processing.append(E('h4','사건·알림 처리'));
+ for(const [key,label] of [['worker','Worker 최근 작업'],['slack','Slack 최근 전송']]){
+  const last=processingData?.[key];
+  processing.append(E('p',label+' · '+(last?name(last.outcome):processingData?'시도 기록 없음':'조회 미확인')));
+  if(last?.at)processing.append(E('small',date(last.at)+' (KST)'));
+ }
  const telemetry=E('article',undefined,'monitoring-path-card');
  const targets=o?.targets?.status==='ok'?o.targets.items:null;
- const logsOK=['portal-api','portal-nginx'].every(key=>o?.logs?.[key]?.status==='ok');
+ const logStatus=lokiStatus(o);
  telemetry.append(E('h4','메트릭·로그'),E('p',targets?'Prometheus 수집 '+targets.filter(t=>t.up===true).length+'/'+targets.length:'Prometheus 수집 미확인'),
-  E('p',logsOK?'Loki 조회 성공':'Loki 조회 미확인'));
+  E('p','Loki '+logStatus.label));
  cards.append(external,processing,proxy,telemetry);
  for(const {label,checks} of Object.values(publicRequestPaths)){
   const card=E('article',undefined,'monitoring-path-card');
@@ -929,9 +1031,8 @@ function renderCollectorPreview(o){
    t.up===true?'수집 성공':t.up===false?'수집 실패':'미확인',t.last_scrape_at?date(t.last_scrape_at)+' (KST)':'미제공']);
   if(!o.targets.items.length)add(['Prometheus','수집 대상','대상 없음','미제공']);
  }else add(['Prometheus','수집 대상','조회 불가','미제공']);
- const logs=o?.logs;
- const logOK=logs?.['portal-api']?.status==='ok'&&logs?.['portal-nginx']?.status==='ok';
- add(['Loki','로그 저장소',logOK?'조회 성공':'조회 미확인','미제공']);
+ const logs=lokiStatus(o);
+ add(['Loki','로그 저장소',logs.label,logs.latest?date(logs.latest)+' (KST)':'최근 로그 없음']);
  table.append(head,body);scroll.append(table);root.append(scroll);
 }
 
@@ -966,6 +1067,8 @@ function renderIncidentTimeline(data){
   }
   card.append(link,track,E('small','감지 '+date(row.detected_at)+' · '+(row.recovery_checked_at
    ?'복구 확인 '+date(row.recovery_checked_at):['login_failures','unauthorized_read','unauthorized_write'].includes(row.rule_id)?'자동 복구 판정 해당 없음':'복구 미확인')+' · 사건 종료 '+date(row.closed_at)+' (KST)'));
+  const elapsed=Math.floor((Date.parse(row.recovery_checked_at)-Date.parse(row.detected_at))/1000);
+  if(row.recovery_checked_at&&elapsed>=0)card.append(E('strong','감지 → 복구 '+Math.floor(elapsed/60)+'분 '+elapsed%60+'초','incident-elapsed'));
   root.append(card);
  }
  if(data.timeline_truncated)root.append(E('p','최근 20건 표시','read-muted'));
@@ -1003,6 +1106,7 @@ function renderIncidentOverview(data){
  const split=buckets.every(b=>b.detected_by_service);
  const services=Object.entries(incidentServices);
  const markers=buckets.map(()=>[]);
+ const closedByService=buckets.every(b=>b.closed_by_service);
  const series=[
   ...(split?services.map(([key,{label,color}])=>[key,label,color,b=>b.detected_by_service[key]||0,false]):[['detected','발생','#b4233d',b=>b.detected,false]]),
   ['closed','사건 종료','#53627b',b=>b.closed,true]
@@ -1014,7 +1118,13 @@ function renderIncidentOverview(data){
    chart.append(svg('polyline',{points:buckets.map((b,i)=>x(i)+','+y(value(b))).join(' '),fill:'none',stroke:color,'stroke-width':dashed?1.7:2.8,opacity:dashed?.58:1,'stroke-dasharray':dashed?'5 4':'none','data-series':key}));
    buckets.forEach((b,i)=>{
     if(!value(b))return;
-    if(split&&!dashed){markers[i].push({key,label,color,count:value(b)});return}
+    if(split&&!dashed){markers[i].push({key,label,color,count:value(b),anchor:value(b)});return}
+    if(dashed&&closedByService){
+     for(const [serviceKey,service] of services){
+      const count=b.closed_by_service[serviceKey]||0;
+      if(count)markers[i].push({key:serviceKey,label:service.label,color:service.color,count,anchor:b.closed,closed:true});
+     }
+    }
     const point=svg('circle',{cx:x(i),cy:y(value(b)),r:3,fill:'white',stroke:color,'stroke-width':1.5});
     point.append(svg('title',{},date(b.start)+' (KST) · '+label+' '+value(b)+'건'));chart.append(point);
    });
@@ -1029,15 +1139,15 @@ function renderIncidentOverview(data){
  markers.forEach((items,i)=>{
   items.sort((a,b)=>b.count-a.count);
   let bottom=-Infinity;
-  const positions=items.map(({count})=>bottom=Math.max(y(count)-12,bottom+18));
+  const positions=items.map(({anchor})=>bottom=Math.max(y(anchor)-12,bottom+18));
   const shift=Math.max(0,bottom-150);
-  for(const [j,{key,label,color,count}] of items.entries()){
+  for(const [j,{key,label,color,count,anchor,closed}] of items.entries()){
    const cy=positions[j]-shift;
-   const cx=x(i),badge=svg('g',{'data-incident-marker':key});
-   badge.append(svg('title',{},date(buckets[i].start)+' (KST) · '+label+' '+count+'건'),
-    svg('line',{x1:cx,x2:cx,y1:cy,y2:y(count),stroke:color,'stroke-width':1.5}),
-    svg('rect',{x:cx-8,y:cy-8,width:16,height:16,rx:4,fill:color,stroke:'white','stroke-width':1}),
-    svg('text',{x:cx,y:cy+3.5,'text-anchor':'middle',fill:'white','font-size':10,'font-weight':700},key==='unknown'?'?':key.toUpperCase()));
+   const cx=x(i),badge=svg('g',{'data-incident-marker':key,'data-event':closed?'closed':'detected'});
+   badge.append(svg('title',{},date(buckets[i].start)+' (KST) · '+label+' '+(closed?'종료 ':'발생 ')+count+'건'),
+    svg('line',{x1:cx,x2:cx,y1:cy,y2:y(anchor),stroke:color,'stroke-width':1.5}),
+    svg('rect',{x:cx-(closed?19:8),y:cy-8,width:closed?38:16,height:16,rx:4,fill:closed?'white':color,stroke:closed?color:'white','stroke-width':1}),
+    svg('text',{x:cx,y:cy+3.5,'text-anchor':'middle',fill:closed?color:'white','font-size':10,'font-weight':700},(key==='unknown'?'?':key.toUpperCase())+(closed?' 종료':'')));
    chart.append(badge);
   }
  });
@@ -1045,6 +1155,16 @@ function renderIncidentOverview(data){
  const axisLabel=last-first>=DAY_MS?value=>kstInput(value).slice(0,10):clock;
  chart.append(svg('text',{x:36,y:182,fill:'#4f6888','font-size':12},axisLabel(first)));
  chart.append(svg('text',{x:402,y:182,'text-anchor':'end',fill:'#4f6888','font-size':12},axisLabel(last)));
+ if(closedByService){
+  const closures=E('div',undefined,'incident-closure-legend');
+  for(const [key,{label,color}] of services){
+   const total=buckets.reduce((n,b)=>n+(b.closed_by_service[key]||0),0);
+   if(!total)continue;
+   const entry=E('span',label+' 종료 '+total+'건','incident-series-key');
+   entry.style?.setProperty('--incident-color',color);closures.append(entry);
+  }
+  legend.append(closures);
+ }
  trend.append(chart,legend,E('small','12개 구간 · 종료는 사건 처리 기록 기준','overview-note'));
  const entries=[['delay','응답 지연'],['collection','수집 실패'],['other','기타']];
  const total=entries.reduce((n,[key])=>n+data.types[key],0);

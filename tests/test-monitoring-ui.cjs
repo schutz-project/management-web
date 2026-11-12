@@ -50,7 +50,7 @@ const handlers={};const stack=[{hash:location.hash,state:null}];let pos=0;
  const history={state:null,replaceState(value,_,hash){this.state=value;location.hash=hash;stack[pos]={hash:location.hash,state:value}},pushState(value,_,hash){this.state=value;location.hash=hash;stack.splice(pos+1);stack.push({hash:location.hash,state:value});pos++},back(){if(pos===0)return;pos--;location.hash=stack[pos].hash;this.state=stack[pos].state;for(const fn of handlers.popstate||[])fn()},forward(){if(pos>=stack.length-1)return;pos++;location.hash=stack[pos].hash;this.state=stack[pos].state;for(const fn of handlers.popstate||[])fn()}};
  const win={document:doc,Event:class{constructor(type){this.type=type}},scrollY:options.scrollY||0,addEventListener(k,fn){(handlers[k]??=[]).push(fn)},scrollTo(position){this.scrollY=position.top}};
  vm.runInNewContext(contextCode,{window:win});vm.runInNewContext(fs.readFileSync(path.join(root,'static/schutz-ui/drafts.js'),'utf8'),{window:win});
- vm.runInNewContext(code,{document:doc,fetch,location,history,URLSearchParams,AbortController,setTimeout,clearTimeout,setInterval:()=>1,clearInterval(){},window:win,navigator:options.navigator||{},console});return {doc,calls,location,id,history,stack,handlers}}
+ vm.runInNewContext(code,{document:doc,fetch,location,history,URLSearchParams,AbortController,setTimeout,clearTimeout,setInterval:fn=>{handlers.refresh=fn;return 1},clearInterval(){},window:win,navigator:options.navigator||{},console});return {doc,calls,location,id,history,stack,handlers}}
 test('실제 응답 수치로 대시보드를 표시하고 시작 시 상태 변경 요청을 보내지 않는다',async()=>{const a=boot();await settle();assert.equal(a.doc.querySelector('.app').hidden,false);assert.match(a.doc.querySelectorAll('.kpi')[2].textContent,/13/);assert.match(a.doc.querySelectorAll('.service')[1].textContent,/4.75/);assert.match(a.doc.querySelector('.notice').textContent,/조회 전용/);assert.equal(a.calls.filter(c=>c.opts.method==='POST').length,0)});
 test('비로그인 시 화면 데이터를 숨기고 로그인 요청에 CSRF를 보낸다',async()=>{const a=boot({signed:false});await settle();assert.equal(a.doc.querySelector('.app').hidden,true);a.doc.querySelector('#username').value='admin01';a.doc.querySelector('#password').value='local-test';await a.doc.querySelector('#login-form').onsubmit({preventDefault(){}});await settle();const call=a.calls.find(c=>c.path==='/api/auth/login');assert.equal(call.opts.headers['X-CSRF-Token'],'csrf-value');assert.equal(a.doc.querySelector('#password').value,'');assert.equal(a.doc.querySelector('.app').hidden,false)});
 test('시간 구간과 화면 위치를 복원하고 선택 기간을 API에 전달한다',async()=>{const a=boot({hash:'#view=resources&window=6h'});await settle();assert(a.calls.some(c=>c.path==='/api/observability?window=6h'));assert.match(a.doc.querySelector('.view-panel').textContent,/서버 리소스/)});
@@ -114,7 +114,7 @@ test('최근 1년을 한 번에 조회하고 잘못된 시간은 제출하지 �
  const query=new URLSearchParams(call.path.split('?')[1]);
  assert.equal(Date.parse(query.get('end'))-Date.parse(query.get('start')),365*86400000);
 });
-test('메인 성능 지표를 A·B·C 순서로 표시하고 미수집을 구분한다',async()=>{const a=boot();await settle();const cards=a.doc.querySelectorAll('.services .service');assert.equal(cards.length,5);assert(cards.every(c=>c.querySelectorAll('.service-aux>div').length===2));assert.match(cards[0].textContent,/앱 응답시간 p95/);assert.match(cards[1].textContent,/앱 DB 작업시간 p95/);assert.match(cards[1].querySelector('.service-aux').textContent,/연결 수미수집활성 세션미수집/);assert.match(cards[2].textContent,/\/health 프록시 응답 p95/);assert.equal(cards[0].querySelector('polyline').getAttribute('stroke'),'#087dff');assert.equal(cards[1].querySelector('polyline').getAttribute('stroke'),'#8b5cf6');assert.equal(cards[2].querySelector('polyline').getAttribute('stroke'),'#14b8a6');assert.match(a.doc.querySelector('.service-metric-group-title').textContent,/직원 포털 A/);
+test('메인 성능 지표를 A·B·C 순서로 표시하고 미수집을 구분한다',async()=>{const a=boot();await settle();const cards=a.doc.querySelectorAll('.services .service');assert.equal(cards.length,5);assert(cards.every(c=>c.querySelectorAll('.service-aux>div').length===2));assert.match(cards[0].textContent,/앱 응답시간 p95/);assert.match(cards[1].textContent,/앱 DB 작업시간 p95/);assert.match(cards[1].querySelector('.service-aux').textContent,/연결 수수집 미설정활성 세션수집 미설정/);assert.match(cards[2].textContent,/\/health 프록시 응답 p95/);assert.equal(cards[0].querySelector('polyline').getAttribute('stroke'),'#087dff');assert.equal(cards[1].querySelector('polyline').getAttribute('stroke'),'#8b5cf6');assert.equal(cards[2].querySelector('polyline').getAttribute('stroke'),'#14b8a6');assert.match(a.doc.querySelector('.service-metric-group-title').textContent,/직원 포털 A/);
 assert.match(cards[3].textContent,/홈페이지 B.*앱 응답시간 p95.*미수집/);
 assert.match(cards[4].textContent,/커뮤니티 C.*앱 응답시간 p95.*미수집/);
 assert.equal(cards[3].querySelector('.service-chart polyline'),null);
@@ -415,4 +415,30 @@ test('사건 상세에서 실제 응답시간 표본 위에 발생선과 복구�
  assert.equal(chart.querySelectorAll('polyline')[0].getAttribute('stroke'),'#8040b8');
  assert(chart.querySelector('rect'));
  assert.deepEqual(chart.querySelectorAll('line').slice(-2).map(l=>l.getAttribute('stroke')),['#b4233d','#087851']);
+});
+
+test('같은 집계 구간에 종료된 B와 C는 각각 종료 배지를 표시한다',async()=>{
+ const start='2026-11-05T05:00:00Z',end='2026-11-05T05:30:00Z';
+ const a=boot({overview:{start,end,buckets:[
+  {start,detected:1,closed:2,detected_by_service:{b:1},closed_by_service:{b:1,c:1}}
+ ],types:{delay:0,collection:1,other:0}}});
+ await settle();
+ const trend=a.doc.querySelector('.incident-trend');
+ const markers=trend.querySelectorAll('g');
+ assert.deepEqual(markers.filter(marker=>marker.getAttribute('data-event')==='closed').map(marker=>marker.textContent.slice(-4)),['B 종료','C 종료']);
+ assert.equal(new Set(markers.map(marker=>marker.querySelector('rect').getAttribute('y'))).size,3);
+ assert.match(trend.textContent,/홈페이지 B 종료 1건.*커뮤니티 C 종료 1건/);
+});
+test('홈 대시보드는 6시간 범위를 유지하면서 자동으로 다시 조회한다',async()=>{
+ const a=boot({hash:'#view=dashboard&window=6h'});
+ await settle();
+ const query='/api/observability?window=6h';
+ assert.equal(a.calls.filter(c=>c.path===query).length,1);
+ await a.handlers.refresh();
+ assert.equal(a.calls.filter(c=>c.path===query).length,2);
+});
+test('최근 요청이 0으로 확인되면 B의 최신 p95에 최근 요청 없음으로 표시한다',async()=>{
+ const a=boot({observability:{metrics:{homepage_ms:{status:'no_data',points:[]},homepage_requests:{status:'ok',value:0}}}});
+ await settle();
+ assert.match(a.doc.querySelector('.service-homepage').textContent,/최근 요청 없음/);
 });

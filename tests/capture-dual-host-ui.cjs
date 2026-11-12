@@ -57,7 +57,7 @@ const server=http.createServer((req,res)=>{
    assert.match(await page.locator('.service-health-card.service-proxy').textContent(),/HTTP 200/);
    assert.match(await page.locator('.incident-trend').textContent(),/발생 5건/);
    assert.match(await page.locator('.incident-timeline').textContent(),/복구 미확인/);
-   assert.match(await page.locator('.monitoring-paths').textContent(),/외부 점검 미연결.*HTTP 200/);
+   assert.match(await page.locator('.monitoring-paths').textContent(),/외부 점검 데이터 미연결.*HTTP 200/);
    assert.match(await page.locator('.collector-preview').textContent(),/Loki/);
    assert.equal(await page.locator('.incident-breakdown + .collector-preview').count(),1);
    const layout=await page.locator('.dashboard-view').evaluate(e=>[e.scrollWidth,e.clientWidth]);
