@@ -145,6 +145,24 @@ test('홈페이지와 커뮤니티 상세는 현재 HTTP 점검과 결측 상태
  assert.match(panel().textContent,/앱 응답시간 p95 추이/);
  assert.equal(panel().querySelector('.service-detail-chart svg'),null);
 });
+test('홈페이지 실측 지표를 메인과 상세에 표시하고 서버 카드에 공유 서비스를 안내한다',async()=>{
+ const checked_at=snapshot.observability.as_of;
+ const at=Date.parse(checked_at);
+ const metrics={...snapshot.observability.metrics,
+  homepage_ms:{status:'ok',value:8,points:[[at-30000,5],[at,8]]},
+  homepage_requests:{status:'ok',value:2},homepage_errors:{status:'ok',value:0}};
+ const a=boot({observability:{metrics}});
+ await settle();
+ const card=a.doc.querySelector('.service-homepage');
+ assert.match(card.textContent,/8 ms/);
+ assert.match(card.textContent,/요청량2 건\/초5xx 서버 오류0 건\/초/);
+ assert.match(a.doc.querySelector('.dashboard-hosts').textContent,/실행 서비스 · 직원 포털 A · 홈페이지 B · 커뮤니티 C/);
+ card.dispatch('click');
+ await settle();
+ const panel=a.doc.querySelector('.service-analysis-panel');
+ assert.match(panel.textContent,/8 ms/);
+ assert(panel.querySelector('.service-detail-chart polyline'));
+});
 test('서비스 그래프는 결측과 긴 간격을 연결하지 않으며 표본 통계를 계산한다',async()=>{const metric=snapshot.observability.metrics.app_ms,old=metric.points;try{const t=Date.parse(snapshot.observability.as_of);metric.points=[[t-180000,1],[t-150000,null],[t-120000,3],[t,2]];const a=boot({hash:'#view=services&service=app'});await settle();assert.equal(a.doc.querySelector('.service-detail-chart').querySelectorAll('polyline').length,3);const stats=a.doc.querySelector('.service-statistics').textContent;assert.match(stats,/표본 평균2 ms/);assert.match(stats,/최대3 ms/);assert.match(stats,/최소1 ms/);assert.match(a.doc.querySelector('.service-analysis-panel').textContent,/전체 요청의 통계가 아닙니다/);}finally{metric.points=old}});
 
 test('통계 아이콘은 기준 색상별 원형을 지정하고 현재값에 실제 표본 시각을 표시한다',async()=>{const a=boot({hash:'#view=services&service=app'});await settle();for(const kind of ['current','mean','max','min','spread'])assert(a.doc.querySelector('.service-stat-'+kind+' svg'));const last=snapshot.observability.metrics.app_ms.points.filter(p=>Number.isFinite(p[1])).at(-1),time=new Date(last[0]).toLocaleTimeString('ko-KR',{timeZone:'Asia/Seoul',hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'});assert.equal(a.doc.querySelector('.service-stat-time').textContent,'('+time+')');});
