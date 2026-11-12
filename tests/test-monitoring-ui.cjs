@@ -442,3 +442,13 @@ test('최근 요청이 0으로 확인되면 B의 최신 p95에 최근 요청 없
  await settle();
  assert.match(a.doc.querySelector('.service-homepage').textContent,/최근 요청 없음/);
 });
+
+test('요청 없는 B 카드는 최신 헬스체크 응답시간을 앱 p95 앞에 표시한다',async()=>{
+ const a=boot({observability:{
+  service_probes:{'homepage-health':{success:true,duration_ms:3.551,checked_at:'2026-11-12T17:58:08Z'}},
+  metrics:{homepage_ms:{status:'no_data',points:[[1794500000000,22]]},homepage_requests:{status:'ok',value:0}}
+ }});
+ await settle();
+ const card=a.doc.querySelector('.service-homepage').textContent;
+ assert.match(card,/현재 \/health 점검 · 정상3\.551 ms.*앱 응답시간 p95.*최근 요청 없음.*마지막 p95 22 ms/);
+});
