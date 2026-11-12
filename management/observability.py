@@ -215,6 +215,13 @@ class Observer:
         duration=probe.replace('probe_success','probe_duration_seconds',1)
         tasks['service_probe_durations']=prom(
             duration+' and (timestamp('+duration+') == timestamp('+probe+'))',current=True)
+        health_jobs=('homepage-health','community-health')
+        health_probe='probe_success{job=~"'+'|'.join(health_jobs)+'"}'
+        health_duration=health_probe.replace('probe_success','probe_duration_seconds',1)
+        tasks['public_health_history']=prom(
+            health_duration+' and ('+health_probe+' == 1)'
+            +' and (timestamp('+health_duration+') == timestamp('+health_probe+'))'
+            +' and (time() - timestamp('+health_duration+') <= 60)',True)
         tasks['service_probes']=prom(probe,current=True)
         tasks['service_probe_times']=prom('timestamp('+probe+')',current=True)
         results=await asyncio.gather(*tasks.values(),return_exceptions=True); data=dict(zip(tasks,results))
@@ -358,6 +365,20 @@ class Observer:
                 duration=probe_durations.get(job)
                 if duration is not None and 0<=duration<=1e6:
                     probes[job]['duration_ms']=duration*1000
+        health_history={}
+        history_rows=data['public_health_history']
+        for job in health_jobs:
+            if isinstance(history_rows,Exception):
+                health_history[job]={'status':'unavailable','points':[]}
+                continue
+            matching=[row for row in history_rows if row.get('metric',{}).get('job')==job]
+            points=[]
+            if len(matching)==1:
+                for stamp,value in matching[0].get('values',[]):
+                    stamp,value=number(stamp),number(value)
+                    if stamp is not None and start<=stamp<=end and value is not None and value>=0:
+                        points.append([stamp*1000,value*1000])
+            health_history[job]={'status':'ok' if points else 'no_data','points':points[-MAX_POINTS:]}
         target_rows=[]
         metadata={}
         if isinstance(data['scrape_metadata'],list):
@@ -395,4 +416,4 @@ class Observer:
                         elif match:=re.search(r'http status (\d{3})\b',error):
                             result['failure_reason']='HTTP '+match[1]
                 target_rows.append(result)
-        return {'as_of':datetime.fromtimestamp(end,timezone.utc).isoformat(),'current_as_of':datetime.fromtimestamp(live_end,timezone.utc).isoformat(),'historical':window=='custom','window_minutes':seconds//60,'window':window,'step_seconds':step,'range_start':datetime.fromtimestamp(start,timezone.utc).isoformat(),'metrics':metrics,'service_probes':probes,'details':details,'alerts':{'status':'unavailable' if isinstance(alerts,Exception) else 'ok','items':alert_rows},'targets':{'status':'unavailable' if isinstance(targets,Exception) else 'ok','items':target_rows},'resources':{'status':resource_status,'source_status':'unavailable' if isinstance(source,Exception) else 'ok' if nodes else 'no_data','metadata_status':metadata_status,'metric_status':metric_status,'items':hosts},'logs':{service:{'status':'unavailable' if isinstance(data[service],Exception) else 'ok','items':[] if isinstance(data[service],Exception) else data[service]} for service in LOG_SERVICES}}
+        return {'as_of':datetime.fromtimestamp(end,timezone.utc).isoformat(),'current_as_of':datetime.fromtimestamp(live_end,timezone.utc).isoformat(),'historical':window=='custom','window_minutes':seconds//60,'window':window,'step_seconds':step,'range_start':datetime.fromtimestamp(start,timezone.utc).isoformat(),'metrics':metrics,'service_probes':probes,'public_health_history':health_history,'details':details,'alerts':{'status':'unavailable' if isinstance(alerts,Exception) else 'ok','items':alert_rows},'targets':{'status':'unavailable' if isinstance(targets,Exception) else 'ok','items':target_rows},'resources':{'status':resource_status,'source_status':'unavailable' if isinstance(source,Exception) else 'ok' if nodes else 'no_data','metadata_status':metadata_status,'metric_status':metric_status,'items':hosts},'logs':{service:{'status':'unavailable' if isinstance(data[service],Exception) else 'ok','items':[] if isinstance(data[service],Exception) else data[service]} for service in LOG_SERVICES}}

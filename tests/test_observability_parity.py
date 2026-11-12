@@ -101,6 +101,29 @@ class ObservabilityParityTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("community-health", probes)
         self.assertIn("== timestamp(probe_success", client.test_query)
 
+    async def test_public_health_history_is_bounded_and_converted_to_ms(self):
+        class HealthHistoryClient(Client):
+            async def get(self, url, params):
+                query = (params or {}).get("query", "")
+                if "probe_duration_seconds" in query and "step" in (params or {}):
+                    self.history_query = query
+                    return Response({"status": "success", "data": {"result": [
+                        {"metric": {"job": "homepage-health"},
+                         "values": [[99, "0.008"], [970, "0.003"], [1000, "NaN"], [1001, "0.009"]]},
+                        {"metric": {"job": "unrelated"}, "values": [[970, "0.009"]]},
+                    ]}})
+                return await super().get(url, params)
+
+        client = HealthHistoryClient()
+        history = (await self.observer.collect(client, end=1000))["public_health_history"]
+        self.assertEqual(history, {
+            "homepage-health": {"status": "ok", "points": [[970000, 3]]},
+            "community-health": {"status": "no_data", "points": []},
+        })
+        self.assertIn("probe_success", client.history_query)
+        self.assertIn("== 1", client.history_query)
+        self.assertIn("<= 60", client.history_query)
+
     async def test_scrape_metadata_is_matched_without_exposing_raw_error(self):
         class ScrapeTransition(Client):
             def __init__(self, up, health, last_scrape):
