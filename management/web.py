@@ -174,21 +174,23 @@ def create_app(settings=None,engine=None,metric_readers=None,observer=None,sessi
                         kind={'response_delay':'delay',
                               'monitoring_target_down':'collection','portal_telemetry_missing':'collection'}.get(rule,'other')
                         types[kind]+=1
-            timeline_query=select(Incident).where(
+            timeline_query=select(Incident,PrometheusAlertState.labels).outerjoin(
+                PrometheusAlertState,PrometheusAlertState.target_key==Incident.target_id).where(
                 scope_condition,Incident.detected_at<=upper,
                 or_(Incident.closed_at.is_(None),Incident.closed_at>=lower),
             ).order_by(Incident.detected_at.desc(),Incident.id).limit(21)
-            incidents=list(db.scalars(timeline_query))
-            selected={incident.id:incident for incident in incidents[:20]}
+            incidents=list(db.execute(timeline_query))
+            selected={incident.id:incident for incident,_ in incidents[:20]}
             observed_until=min(upper,datetime.fromtimestamp(current,timezone.utc))
             verified=incident_recoveries(db,selected,observed_until)
             timeline=[]
-            for incident in selected.values():
+            for incident,labels in incidents[:20]:
                 closed=utc(incident.closed_at)
                 detected=utc(incident.detected_at)
                 recovery=verified.get(incident.id)
                 timeline.append({'id':incident.id,'target_id':incident.target_id,'synthetic':incident.synthetic,
-                                 'rule_id':incident.rule_id,'detected_at':stamp(detected),
+                                 'rule_id':incident.rule_id,'service_key':incident_service(incident.target_id,incident.rule_id,labels),
+                                 'detected_at':stamp(detected),
                                  'recovery_checked_at':stamp(recovery),'closed_at':stamp(closed)})
             recent_detected=[]
             if window=='custom':

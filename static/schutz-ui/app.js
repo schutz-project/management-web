@@ -432,7 +432,13 @@ function evidencePanel(d){
 }
 function cacheIncidentDraft(id){const action=$('#action-content'),resolution=$('#resolution'),check=$('#test-stopped');const old=incidentDrafts.get(id)||{};incidentDrafts.set(id,{action:action?action.value:old.action||'',resolution:resolution?resolution.value:old.resolution||'',stopped:check?check.checked:old.stopped||false})}
 function restoreIncidentDraft(id){const draft=incidentDrafts.get(id);if(!draft)return;const action=$('#action-content'),resolution=$('#resolution'),check=$('#test-stopped');if(action)action.value=draft.action;if(resolution)resolution.value=draft.resolution;if(check){check.checked=draft.stopped;check.onchange?.()}if((!action&&draft.action)||(!resolution&&draft.resolution)){const saved=E('details');saved.append(E('summary','저장되지 않은 입력 보기'),E('p',draft.action||draft.resolution));$('#detail-body').append(saved)}}
-const incidentServiceLabels={a:'직원 포털 A',b:'홈페이지 B',c:'커뮤니티 C'};
+const incidentServices={
+ a:{label:'직원 포털 A',color:'#1d65c1'},
+ b:{label:'홈페이지 B',color:'#8040b8'},
+ c:{label:'커뮤니티 C',color:'#147c68'},
+ unknown:{label:'서비스 미확인',color:'#586476'}
+};
+const incidentServiceLabels=Object.fromEntries(Object.entries(incidentServices).map(([key,service])=>[key,service.label]));
 function incidentService(d){
  const labels=d.monitoring?.labels;
  const service=labels?.service;
@@ -944,11 +950,15 @@ function renderIncidentTimeline(data){
  range.append(E('span',date(data.start)),E('span',date(data.end)+' (KST)'));root.append(range);
  for(const row of data.timeline){
   const card=E('article',undefined,'incident-timeline-row');
-  const link=button((row.synthetic?'[모의] ':'')+name(row.rule_id)+' · '+name(row.target_id),()=>openIncident(row.id));
+  const service=incidentServices[row.service_key]||incidentServices.unknown;
+  card.style?.setProperty('--incident-color',service.color);
+  const link=button('',()=>openIncident(row.id));
+  link.classList.add('incident-timeline-link');
+  link.append(E('strong',service.label),E('span',(row.synthetic?'[모의] ':'')+name(row.rule_id)));
   const track=svg('svg',{viewBox:'0 0 100 8',preserveAspectRatio:'none','aria-hidden':'true'});
   const detected=percent(row.detected_at);
   track.append(svg('line',{x1:0,x2:100,y1:4,y2:4,stroke:'#dbe6f4','stroke-width':2}));
-  if(row.recovery_checked_at)track.append(svg('line',{x1:detected,x2:percent(row.recovery_checked_at),y1:4,y2:4,stroke:'#70ad9b','stroke-width':4}));
+  if(row.recovery_checked_at)track.append(svg('line',{x1:detected,x2:percent(row.recovery_checked_at),y1:4,y2:4,stroke:service.color,'stroke-width':5}));
   track.append(svg('line',{x1:detected,x2:detected,y1:0,y2:8,stroke:'#c64e66','stroke-width':1}));
   if(row.recovery_checked_at){
    const recovered=percent(row.recovery_checked_at);
@@ -983,7 +993,7 @@ function renderIncidentOverview(data){
  const donutColors=['#E7A0AD','#EFC58F','#A8C5E8'];
  const buckets=data.buckets;
  const maximum=Math.max(1,...buckets.flatMap(b=>[b.detected,b.closed]));
- const w=420,h=180,x=i=>36+i*366/(buckets.length-1),y=v=>144-v*126/maximum;
+ const w=420,h=192,x=i=>36+i*366/Math.max(1,buckets.length-1),y=v=>156-v*122/maximum;
  const chart=svg('svg',{viewBox:'0 0 '+w+' '+h,role:'img','aria-label':incidentScopeLabel(data?.scope)+' 발생 및 종료 건수 추이'});
  for(const n of [...new Set([0,Math.floor(maximum/2),maximum])]){
   chart.append(svg('line',{x1:36,x2:402,y1:y(n),y2:y(n),stroke:'#e0e9f4'}));
@@ -991,32 +1001,50 @@ function renderIncidentOverview(data){
  }
  const legend=E('div',undefined,'incident-chart-legend');
  const split=buckets.every(b=>b.detected_by_service);
- const services=[['a','직원 포털 A','#1d65c1'],['b','홈페이지 B','#8040b8'],['c','커뮤니티 C','#147c68'],['unknown','서비스 미확인','#6b7280']];
+ const services=Object.entries(incidentServices);
+ const markers=buckets.map(()=>[]);
  const series=[
-  ...(split?services.map(([key,label,color])=>[key,label,color,b=>b.detected_by_service[key]||0,false]):[['detected','발생','#b4233d',b=>b.detected,false]]),
+  ...(split?services.map(([key,{label,color}])=>[key,label,color,b=>b.detected_by_service[key]||0,false]):[['detected','발생','#b4233d',b=>b.detected,false]]),
   ['closed','사건 종료','#53627b',b=>b.closed,true]
  ];
  if(split)legend.append(E('strong','발생 '+buckets.reduce((n,b)=>n+b.detected,0)+'건'));
  for(const [key,label,color,value,dashed] of series){
   const total=buckets.reduce((n,b)=>n+value(b),0);
   if(total){
-   chart.append(svg('polyline',{points:buckets.map((b,i)=>x(i)+','+y(value(b))).join(' '),fill:'none',stroke:color,'stroke-width':2,'stroke-dasharray':dashed?'5 4':'none','data-series':key}));
+   chart.append(svg('polyline',{points:buckets.map((b,i)=>x(i)+','+y(value(b))).join(' '),fill:'none',stroke:color,'stroke-width':dashed?1.7:2.8,opacity:dashed?.58:1,'stroke-dasharray':dashed?'5 4':'none','data-series':key}));
    buckets.forEach((b,i)=>{
     if(!value(b))return;
+    if(split&&!dashed){markers[i].push({key,label,color,count:value(b)});return}
     const point=svg('circle',{cx:x(i),cy:y(value(b)),r:3,fill:'white',stroke:color,'stroke-width':1.5});
     point.append(svg('title',{},date(b.start)+' (KST) · '+label+' '+value(b)+'건'));chart.append(point);
    });
   }
   if(key==='unknown'&&!total)continue;
   const entry=E('span',label+' '+total+'건','incident-series-key');
+  entry.style?.setProperty('--incident-color',color);
   const swatch=svg('svg',{width:16,height:8,'aria-hidden':'true'});
   swatch.append(svg('line',{x1:0,x2:16,y1:4,y2:4,stroke:color,'stroke-width':2,'stroke-dasharray':dashed?'5 4':'none'}));
   entry.prepend(swatch);legend.append(entry);
  }
+ markers.forEach((items,i)=>{
+  items.sort((a,b)=>b.count-a.count);
+  let bottom=-Infinity;
+  const positions=items.map(({count})=>bottom=Math.max(y(count)-12,bottom+18));
+  const shift=Math.max(0,bottom-150);
+  for(const [j,{key,label,color,count}] of items.entries()){
+   const cy=positions[j]-shift;
+   const cx=x(i),badge=svg('g',{'data-incident-marker':key});
+   badge.append(svg('title',{},date(buckets[i].start)+' (KST) · '+label+' '+count+'건'),
+    svg('line',{x1:cx,x2:cx,y1:cy,y2:y(count),stroke:color,'stroke-width':1.5}),
+    svg('rect',{x:cx-8,y:cy-8,width:16,height:16,rx:4,fill:color,stroke:'white','stroke-width':1}),
+    svg('text',{x:cx,y:cy+3.5,'text-anchor':'middle',fill:'white','font-size':10,'font-weight':700},key==='unknown'?'?':key.toUpperCase()));
+   chart.append(badge);
+  }
+ });
  const first=Date.parse(data.start),last=Date.parse(data.end);
  const axisLabel=last-first>=DAY_MS?value=>kstInput(value).slice(0,10):clock;
- chart.append(svg('text',{x:36,y:170,fill:'#4f6888','font-size':12},axisLabel(first)));
- chart.append(svg('text',{x:402,y:170,'text-anchor':'end',fill:'#4f6888','font-size':12},axisLabel(last)));
+ chart.append(svg('text',{x:36,y:182,fill:'#4f6888','font-size':12},axisLabel(first)));
+ chart.append(svg('text',{x:402,y:182,'text-anchor':'end',fill:'#4f6888','font-size':12},axisLabel(last)));
  trend.append(chart,legend,E('small','12개 구간 · 종료는 사건 처리 기록 기준','overview-note'));
  const entries=[['delay','응답 지연'],['collection','수집 실패'],['other','기타']];
  const total=entries.reduce((n,[key])=>n+data.types[key],0);

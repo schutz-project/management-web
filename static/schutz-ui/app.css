@@ -255,3 +255,9 @@
 .incident-trend .incident-series-key svg{width:16px;height:8px;margin:0}
 
 .incident-detail-timing .incident-metric-chart svg{height:auto;max-height:270px}
+
+.incident-chart-legend .incident-series-key{color:var(--incident-color,#334155);padding:4px 8px;border:1px solid currentColor;border-radius:6px}
+.incident-timeline-row{border-inline-start:4px solid var(--incident-color,#586476)}
+.incident-timeline-row .incident-timeline-link{display:inline-flex;flex-wrap:wrap;gap:4px 8px;align-items:center;text-align:left;color:var(--incident-color,#586476)}
+.incident-timeline-link strong{background:var(--incident-color,#586476);color:white;border-radius:4px;padding:2px 6px}
+.incident-timeline-row svg{height:12px}
