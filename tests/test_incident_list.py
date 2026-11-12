@@ -210,3 +210,7 @@ class DashboardOverviewTests(IncidentActionFixture):
             state.evaluated_at=moment-timedelta(minutes=2)
 
         self.assertEqual(historical_timeline(),before)
+        for incident_id in ('verified-recovery','closed-only'):
+            response=self.client.get('/api/incidents/'+incident_id)
+            self.assertEqual(response.status_code,200)
+            self.assertEqual(response.json()['recovery_checked_at'],before[incident_id]['recovery_checked_at'])
