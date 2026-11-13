@@ -287,7 +287,19 @@
   border-radius: .65rem;
 }
 .incident-first-summary :is(h3, p) { margin: 0; }
-.incident-first-summary > button { justify-self: start; }
+.incident-summary-lead { padding: .75rem; background: #edf5ff; border-radius: .45rem; }
+.incident-summary-lead p { margin-top: .25rem; }
+.incident-summary-facts { margin: 0; }
+.incident-summary-facts > div { display: grid; grid-template-columns: minmax(0, 9rem) minmax(0, 1fr); gap: .35rem .75rem; padding: .55rem 0; border-bottom: 1px solid #dbe6f4; }
+.incident-summary-facts dt { font-weight: 600; }
+.incident-summary-facts dd { margin: 0; overflow-wrap: anywhere; }
+.incident-summary-facts dd button { margin-inline-start: .5rem; }
+.incident-summary-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+.incident-milestones { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .75rem; list-style: none; padding: 0; }
+.incident-milestones span { display: block; overflow-wrap: anywhere; }
+@media (max-width: 540px) {
+  .incident-summary-facts > div, .incident-milestones { grid-template-columns: 1fr; }
+}
 .incident-identifiers summary { cursor: pointer; }
 .incident-elapsed { display: block; margin-top: .25rem; }
 .incident-closure-legend {

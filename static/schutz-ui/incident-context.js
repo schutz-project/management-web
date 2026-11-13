@@ -77,7 +77,7 @@
       if(job.status!=='succeeded'){label='처리 상태 미확인';tone='unknown'}
       else if(job.mode==='demo'){label='시험 처리 · 실제 연결 아님';tone='unknown'}
       else if(job.mode!=='live'){label='완료 · 연결 방식 미확인';tone='unknown'}
-      else if(kind==='ai'){label='분석 성공';tone='success'}
+      else if(kind==='ai'){label='AI 분석 완료';tone='success'}
       else if(job.sent===true||job.result?.sent===true){label='전송 성공';tone='success'}
       else{label='완료 · 전송 미확인';tone='unknown'}
     }

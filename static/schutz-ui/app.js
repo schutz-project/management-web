@@ -497,7 +497,7 @@ function safeError(code){return typeof code==='string'&&/^[A-Z0-9_]{1,60}$/.test
 function attemptHistory(job){const more=E('details',undefined,'attempt-history');more.append(E('summary','시도 이력 보기'));if(!job?.history?.length)more.append(E('p','실제 시도 기록이 없습니다.','read-muted'));else for(const a of job.history){const row=E('div',undefined,'attempt-row');row.append(E('b',(Number.isInteger(a.number)?a.number+'회':'시도 번호 미제공')+' · '+name(a.outcome)),E('span','시작 '+contextDate(a.started_at)+' · 완료 '+contextDate(a.finished_at)+' (KST)'));if(a.error_code)row.append(E('code',safeError(a.error_code)));more.append(row)}return more}
 function renderAIJob(j){
  const box=E('section',undefined,'incident-ai-card'),status=jobDisplay(j,'ai');const head=E('div',undefined,'incident-card-head');head.append(E('h3','AI 분석 결과'),statusBadge(status.label,status.tone));box.append(head,E('p',j?(j.attempts??'미제공')+'회 시도 · 최근 시도 '+contextDate(status.lastAttempt)+' (KST)':'분석 작업 기록이 없습니다.','read-muted'));
- box.append(E('p','분석 성공은 원인 확정이나 사건 종료를 뜻하지 않습니다.','read-muted'));
+ box.append(E('p','원인 확정과 사건 종료는 관리자 확인이 필요합니다.','read-muted'));
  if(j?.error_code){const failure=E('details');failure.append(E('summary','분석 오류 상세'),E('code',safeError(j.error_code)));box.append(failure)}
  if(j?.result){const result=j.result;for(const[key,label]of [['summary','핵심 요약 · 사실 대조 필요'],['hypotheses','원인 후보 (추정)'],['next_checks','추가 확인'],['limitations','분석 한계']]){const section=E('section',undefined,'ai-result-field');section.append(E('h4',label));if(Array.isArray(result[key])){const list=E('ul');for(const item of result[key])if(typeof item==='string')list.append(E('li',item));section.append(list);if(!list.children.length)section.append(E('p','제공된 항목이 없습니다.','read-muted'))}else section.append(E('p',typeof result[key]==='string'?result[key]:'미제공',key==='summary'?'ai-summary-preview':''));box.append(section)}const raw=E('details',undefined,'ai-original');raw.append(E('summary','AI 원문 보기'));const original={};for(const key of ['summary','hypotheses','evidence_ids','next_checks','limitations'])if(result[key]!==undefined)original[key]=result[key];raw.append(pretty(original));box.append(raw)}else box.append(E('p',j?.status==='failed'?'저장된 분석 결과가 없습니다. 실패 상태와 시도 이력을 확인해주세요.':'분석 결과가 아직 제공되지 않았습니다.','read-note'));
  box.append(attemptHistory(j));return box;
@@ -549,7 +549,7 @@ function incidentService(d){
 function incidentTiming(d){
  const box=E('section',undefined,'incident-detail-timing');
  box.dataset.recovery=d.recovery_checked_at||'';
- box.append(E('h3','장애 발생·복구 시점'));
+ box.append(E('h3','사건 타임라인 (KST)'));
  const detected=Date.parse(d.detected_at),recovered=Date.parse(d.recovery_checked_at),closed=Date.parse(d.closed_at);
  if(!Number.isFinite(detected)){box.append(E('p','장애 발생 시각 미제공','read-muted'));return box}
  const verified=Number.isFinite(recovered)&&recovered>=detected&&(!Number.isFinite(closed)||recovered<=closed);
@@ -561,7 +561,13 @@ function incidentTiming(d){
   const x=5+90*(recovered-detected)/span;
   track.append(svg('line',{x1:x,x2:x,y1:1,y2:15,stroke:'#087851','stroke-width':2,'vector-effect':'non-scaling-stroke'}));
  }
- box.append(track,E('p','발생(탐지) '+contextDate(d.detected_at)+' (KST) · '+(verified?'복구 확인 '+contextDate(d.recovery_checked_at)+' (KST)':'복구 미확인'),'read-muted'));
+ const milestones=E('ol',undefined,'incident-milestones');
+ for(const [label,value] of [['탐지',contextDate(d.detected_at)],['복구 확인',verified?contextDate(d.recovery_checked_at)+' (KST)':'복구 미확인'],['사건 종료',contextDate(d.closed_at)]]){
+  const milestone=E('li');
+  milestone.append(E('b',label),E('span',value));
+  milestones.append(milestone);
+ }
+ box.append(milestones,track);
  const service=incidentService(d);
  const metricKey={'직원 포털 A':'app_ms','홈페이지 B':'homepage_ms','커뮤니티 C':'community_ms'}[service];
  if(metricKey&&state.mode.mode!=='snapshot'){
@@ -586,31 +592,54 @@ function incidentTiming(d){
  }
  return box;
 }
-function incidentSummary(d,ai,showAnalysis){
+function incidentSummary(d,ai,showAnalysis,showEvidence){
  const card=E('section',undefined,'incident-first-summary');
- card.append(E('h3','확인된 내용'));
- const monitor=d.monitoring;
- const observation=d.rule_id==='monitoring_target_down'
-  ?'Prometheus 경보가 수집 대상의 연결 실패를 기록했습니다.'
-  :name(d.rule_id)+' 사건이 '+contextDate(d.detected_at)+' (KST)에 기록됐습니다.';
- card.append(E('p',observation),E('p','실제 사용자 영향 · 확인된 정보 없음','read-muted'));
  const title=E('div',undefined,'incident-card-head'),status=jobDisplay(ai,'ai');
- title.append(E('h3','AI 핵심 요약'),statusBadge(status.label,status.tone));
- card.append(title,E('p',typeof ai?.result?.summary==='string'?ai.result.summary:'저장된 분석 요약이 없습니다.','ai-summary-preview'));
- const next=ai?.result?.next_checks?.find?.(item=>typeof item==='string');
- if(next)card.append(E('p','우선 확인 · '+next));
- if(monitor?.alert_name)card.append(E('small','탐지 출처 · Prometheus '+monitor.alert_name,'read-muted'));
+ title.append(E('h3','AI 판단 요약'),statusBadge(status.label,status.tone));
+ const targetDown=d.rule_id==='monitoring_target_down';
+ const summary=typeof ai?.result?.summary==='string'?ai.result.summary.trim():'';
+ const lead=E('div',undefined,'incident-summary-lead');
+ lead.append(E('b',targetDown?'지표 수집 대상 연결 실패':name(d.rule_id)));
+ lead.append(E('p','사용자 영향 · 미확인'));
+ if(!targetDown&&summary)lead.append(E('p',summary,'ai-summary-preview'));
+ card.append(title,lead);
+
  const context=window.SchutzIncidentContext?.build?.(d,ai);
- if(context?.known){
-  const count=value=>Number.isInteger(value)?value+'건':'미제공';
-  card.append(E('small','현재 근거 '+count(context.current.length)+' · 인용 '+count(context.currentCitations)+
-   ' / 과거 사례 '+count(context.histories.length)+' · 인용 '+count(context.historyCitations),'read-muted'));
+ const current=context?.current??[];
+ const cited=current.filter(row=>row.cited);
+ const history=context?.histories??[];
+ const citedHistory=history.filter(row=>row.cited);
+ const firstHistory=citedHistory[0];
+ const next=Array.isArray(ai?.result?.next_checks)
+  ?ai.result.next_checks.find(item=>typeof item==='string'&&item.trim())
+  :undefined;
+ const rows=E('dl',undefined,'incident-summary-facts');
+ function addFact(label,value){
+  const row=E('div'),description=E('dd');
+  description.append(value);
+  row.append(E('dt',label),description);
+  rows.append(row);
+  return description;
  }
- if(context?.failureWindow){
-  const {first,last,count}=context.failureWindow;
-  card.append(E('small','관측된 실패 '+count+'건 · '+contextDate(first)+' ~ '+contextDate(last)+' (KST)','read-muted'));
- }
- card.append(button('AI 분석 보기',showAnalysis));
+ const sources=[...new Set(current.map(row=>row.source))];
+ addFact('조회한 데이터',context?.known
+  ?current.length?sources.join(' · ')+' ('+current.length+'건)':'저장된 분석 입력 없음'
+  :'분석 입력 미제공');
+ const evidence=cited[0];
+ const basis=evidence
+  ?evidence.source+' · '+evidence.observation+(cited.length>1?' 외 '+(cited.length-1)+'건':'')
+  :context?.referencesKnown?'확인 가능한 현재 근거 인용 없음':'인용 근거 미확인';
+ addFact('판단 근거',basis);
+ const past=addFact('과거 유사 사례',firstHistory
+  ?name(firstHistory.payload.rule_id)+' · 같은 대상의 종료 사건'+(citedHistory.length>1?' 외 '+(citedHistory.length-1)+'건':'')
+  :!context?.known?'과거 사례 입력 미확인'
+  :!history.length?'분석 입력에 포함된 과거 사례 없음'
+  :context.referencesKnown?'과거 사례 '+history.length+'건 입력 · AI 인용 없음':'과거 사례 '+history.length+'건 입력 · AI 인용 미확인');
+ if(firstHistory?.incidentID)past.append(button('과거 사건 보기',()=>openIncident(firstHistory.incidentID)));
+ addFact('관리자 다음 확인',next||'저장된 추가 확인 제안 없음');
+ const actions=E('div',undefined,'incident-summary-actions');
+ actions.append(button('탐지 근거 보기',showEvidence),button('AI 분석 전체 보기',showAnalysis));
+ card.append(rows,actions);
  return card;
 }
 const incidentSections=new Map();
@@ -642,7 +671,7 @@ function incidentDetail(d){
   panels.append(panel);tabs.append(control);sections[key]=panel;controls[key]=control;
  }
  root.append(tabs,panels);selectSection(sections[previousSection]?previousSection:'summary');
- sections.summary.append(incidentSummary(d,ai,()=>selectSection('analysis')),incidentTiming(d),currentIncidentStatus(d));
+ sections.summary.append(incidentSummary(d,ai,()=>selectSection('analysis'),()=>selectSection('evidence')),incidentTiming(d),currentIncidentStatus(d));
  sections.analysis.append(renderAIJob(ai),incidentContext(d,ai));
  sections.evidence.append(evidencePanel(d));
  const actions=E('section',undefined,'incident-action-section');actions.append(E('h3','접수 · 조치 기록'),E('p','초안은 제안이며 실제 수행 내용을 검토한 뒤 직접 저장합니다. 화면 닫기는 사건 종료가 아닙니다.','read-note'));

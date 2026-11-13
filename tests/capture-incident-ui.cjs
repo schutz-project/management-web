@@ -39,7 +39,17 @@ const server=http.createServer((req,res)=>{const url=new URL(req.url,'http://loc
   assert.equal(await page.getByRole('button',{name:'화면 닫기',exact:true}).count(),0);assert.equal(await page.locator('#detail').isVisible(),false);
   const secondary=await page.locator('.incident-status-meta dt,.incident-workspace .read-muted,.incident-workspace .read-note').evaluateAll(es=>es.filter(e=>e.getClientRects().length).map(e=>parseFloat(getComputedStyle(e).fontSize)));assert(secondary.every(size=>size>=13),prefix+' 보조 설명 글자 크기');checks.push(prefix+'px: 보조 설명 최소 13px 확인');
   assert(await page.locator('.incident-first-summary').isVisible());
-  assert(await page.getByText('AI 핵심 요약',{exact:true}).isVisible());
+  assert(await page.getByText('AI 판단 요약',{exact:true}).isVisible());
+  const summary=page.locator('.incident-first-summary');
+  for(const label of ['조회한 데이터','판단 근거','과거 유사 사례','관리자 다음 확인']){
+   assert(await summary.getByText(label,{exact:true}).isVisible());
+  }
+  await summary.getByRole('button',{name:'탐지 근거 보기',exact:true}).click();
+  assert(await page.locator('.incident-evidence-panel').isVisible());
+  await page.getByRole('button',{name:'사건 요약',exact:true}).click();
+  await summary.getByRole('button',{name:'AI 분석 전체 보기',exact:true}).click();
+  assert(await page.locator('.incident-ai-card').isVisible());
+  await page.getByRole('button',{name:'사건 요약',exact:true}).click();
   const overflow=await page.locator('.incident-page-body').evaluate(e=>({width:e.clientWidth,scroll:e.scrollWidth}));assert(overflow.scroll<=overflow.width+1,prefix+' 상세 가로 잘림');
   await page.screenshot({path:path.join(out,prefix+'-02-detail-top.png')});
   for(const [tab,selectors] of [
