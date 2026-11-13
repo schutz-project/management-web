@@ -553,21 +553,13 @@ function incidentTiming(d){
  const detected=Date.parse(d.detected_at),recovered=Date.parse(d.recovery_checked_at),closed=Date.parse(d.closed_at);
  if(!Number.isFinite(detected)){box.append(E('p','장애 발생 시각 미제공','read-muted'));return box}
  const verified=Number.isFinite(recovered)&&recovered>=detected&&(!Number.isFinite(closed)||recovered<=closed);
- const span=Math.max(60000,(verified?recovered:detected)-detected,Number.isFinite(closed)?closed-detected:0);
- const track=svg('svg',{viewBox:'0 0 100 16',preserveAspectRatio:'none','aria-hidden':'true'});
- track.append(svg('line',{x1:5,x2:95,y1:8,y2:8,stroke:'#dbe6f4','stroke-width':2}));
- track.append(svg('line',{x1:5,x2:5,y1:1,y2:15,stroke:'#b4233d','stroke-width':2,'vector-effect':'non-scaling-stroke'}));
- if(verified){
-  const x=5+90*(recovered-detected)/span;
-  track.append(svg('line',{x1:x,x2:x,y1:1,y2:15,stroke:'#087851','stroke-width':2,'vector-effect':'non-scaling-stroke'}));
- }
  const milestones=E('ol',undefined,'incident-milestones');
  for(const [label,value] of [['탐지',contextDate(d.detected_at)],['복구 확인',verified?contextDate(d.recovery_checked_at)+' (KST)':'복구 미확인'],['사건 종료',contextDate(d.closed_at)]]){
   const milestone=E('li');
   milestone.append(E('b',label),E('span',value));
   milestones.append(milestone);
  }
- box.append(milestones,track);
+ box.append(milestones);
  const service=incidentService(d);
  const metricKey={'직원 포털 A':'app_ms','홈페이지 B':'homepage_ms','커뮤니티 C':'community_ms'}[service];
  if(metricKey&&state.mode.mode!=='snapshot'){
@@ -584,7 +576,6 @@ function incidentTiming(d){
      if(metric?.status==='unavailable'){unavailable();return}
      plot.replaceChildren(E('p','사건 시점의 응답시간 표본 없음','read-muted'));return;
     }
-    track.remove();
     const color={app_ms:'#1d65c1',homepage_ms:'#8040b8',community_ms:'#147c68'}[metricKey];
     servicePlot(plot,points,color,'서비스 응답시간 p95',true,false,{start,end,detected,recovered:verified&&recovered<=end?recovered:null,step:o.step_seconds});
    }).catch(unavailable);
