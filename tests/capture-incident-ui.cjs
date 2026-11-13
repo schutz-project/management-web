@@ -36,11 +36,11 @@ const server=http.createServer((req,res)=>{const url=new URL(req.url,'http://loc
   await page.screenshot({path:path.join(out,prefix+'-01-list.png'),fullPage:true});
   assert.equal(await page.locator('.incident-table th').count(),9);assert.equal(await page.locator('.incident-count-card').count(),4);
   await page.getByRole('button',{name:'상세 보기 →'}).first().click();await page.locator('.incident-workspace').waitFor();
-  assert.equal(await page.getByRole('button',{name:'화면 닫기',exact:true}).count(),1);assert.equal(await page.locator('#detail-close').isVisible(),false);
+  assert.equal(await page.getByRole('button',{name:'화면 닫기',exact:true}).count(),0);assert.equal(await page.locator('#detail').isVisible(),false);
   const secondary=await page.locator('.incident-status-meta dt,.incident-workspace .read-muted,.incident-workspace .read-note').evaluateAll(es=>es.filter(e=>e.getClientRects().length).map(e=>parseFloat(getComputedStyle(e).fontSize)));assert(secondary.every(size=>size>=13),prefix+' 보조 설명 글자 크기');checks.push(prefix+'px: 보조 설명 최소 13px 확인');
   assert(await page.locator('.incident-first-summary').isVisible());
   assert(await page.getByText('AI 핵심 요약',{exact:true}).isVisible());
-  const overflow=await page.locator('#detail').evaluate(e=>({width:e.clientWidth,scroll:e.scrollWidth}));assert(overflow.scroll<=overflow.width+1,prefix+' 상세 가로 잘림');
+  const overflow=await page.locator('.incident-page-body').evaluate(e=>({width:e.clientWidth,scroll:e.scrollWidth}));assert(overflow.scroll<=overflow.width+1,prefix+' 상세 가로 잘림');
   await page.screenshot({path:path.join(out,prefix+'-02-detail-top.png')});
   for(const [tab,selectors] of [
    ['AI 분석',['.context-history','.incident-ai-card']],
@@ -59,7 +59,7 @@ const server=http.createServer((req,res)=>{const url=new URL(req.url,'http://loc
   assert.equal(await page.getByLabel('전체 사건 ID').inputValue(),id);
   const buttons=await page.locator('.incident-action-section form>button,.incident-closure-section form>button,.draft-panel>button').evaluateAll(es=>es.filter(e=>e.getClientRects().length).map(e=>({text:e.textContent,height:e.getBoundingClientRect().height,x:e.getBoundingClientRect().x})));
   assert(buttons.every(b=>b.height>=44));const save=buttons.find(b=>b.text==='조치 기록 저장'),close=buttons.find(b=>b.text==='사건 종료');assert(Math.abs(save.x-close.x)<2,prefix+' 저장·종료 정렬');
-  checks.push(prefix+'px: 목록 9열·요약 4개, 표/상세 가로 잘림 없음, 닫기 단일 노출, 첫 화면 요약 및 탭 전환, 버튼 44px·정렬 통과');
+  checks.push(prefix+'px: 목록 9열·요약 4개, 표/상세 가로 잘림 없음, 본문 상세 표시, 첫 화면 요약 및 탭 전환, 버튼 44px·정렬 통과');
   await page.getByRole('button',{name:'← 목록으로 돌아가기',exact:true}).click();await page.locator('.incident-table').waitFor();
  }
  await page.setViewportSize({width:1440,height:1000});
@@ -71,7 +71,7 @@ const server=http.createServer((req,res)=>{const url=new URL(req.url,'http://loc
  await page.getByLabel('조치 내용',{exact:true}).fill('409 충돌 후에도 유지할 조치 초안');await page.getByRole('button',{name:'조치 기록 저장',exact:true}).click();await page.getByText(/최신 상태를 다시 조회했습니다/).waitFor();assert.equal(await page.getByLabel('조치 내용',{exact:true}).inputValue(),'409 충돌 후에도 유지할 조치 초안');assert.equal(posts.length,1);checks.push('409 단일 요청·최신 상세 조회·조치 입력 보존');
  await page.getByRole('button',{name:'AI 분석',exact:true}).click();
  await page.getByRole('button',{name:'원본 사건 상세 보기',exact:true}).click();await page.waitForFunction(()=>document.querySelector('.incident-id-row textarea')?.value==='22222222-2222-4222-8222-222222222222');await page.goBack();await page.waitForFunction(()=>document.querySelector('.incident-id-row textarea')?.value==='11111111-1111-4111-8111-111111111111');checks.push('과거 원본 조회 및 브라우저 뒤로가기 복귀');
- await page.getByRole('button',{name:'화면 닫기',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('#detail').open);await page.goForward();await page.locator('.incident-workspace').waitFor();checks.push('닫기·브라우저 앞으로가기 상세 복원');
+ await page.goBack();await page.locator('.incident-table').waitFor();await page.goForward();await page.locator('.incident-workspace').waitFor();checks.push('뒤로가기·브라우저 앞으로가기 상세 복원');
  await page.getByRole('button',{name:'← 목록으로 돌아가기',exact:true}).click();await page.locator('.incident-table').waitFor();assert.equal(await page.getByLabel('사건 검색',{exact:true}).inputValue(),'FastAPI');checks.push('목록 복귀 후 검색·필터 유지');
  incident.closure={eligible:false,reasons:['TWO_HEALTHY_CHECKS_REQUIRED']};await page.getByRole('button',{name:'상세 보기 →'}).first().click();await page.locator('.incident-workspace').waitFor();await page.getByRole('button',{name:'조치·알림',exact:true}).click();assert.equal(await page.getByRole('button',{name:'사건 종료',exact:true}).isEnabled(),false);checks.push('서버 종료 조건 미충족 시 종료 버튼 비활성');
  await page.getByRole('button',{name:'← 목록으로 돌아가기',exact:true}).click();await page.locator('.incident-table').waitFor();incident.closure={eligible:true,reasons:[]};
@@ -92,7 +92,7 @@ const server=http.createServer((req,res)=>{const url=new URL(req.url,'http://loc
   assert(value.includes('종료 전 저장 근거')&&value.includes('정상 지표 확인'));
   assert(value.includes('현재 상태나 종료 당시 복구 완료를 보증하지 않습니다.'));
   assert(!value.includes('복구 조건 미충족')&&!value.includes('수집 미확인'));
-  const width=await page.locator('#detail').evaluate(e=>({width:e.clientWidth,scroll:e.scrollWidth}));assert(width.scroll<=width.width+1);
+  const width=await page.locator('.incident-page-body').evaluate(e=>({width:e.clientWidth,scroll:e.scrollWidth}));assert(width.scroll<=width.width+1);
   await page.screenshot({path:path.join(out,viewport.width+'-closed-monitoring.png')});
   checks.push(viewport.width+'px: 종료 전 저장 근거·관측 시각 표시, 현재 상태와 구분, 추가 변경 요청 없음');
  }
