@@ -17,22 +17,32 @@ const notice=E('p',undefined,'notice');notice.setAttribute('role','status');head
 const detail=$('#detail');detail.classList.add('functional-dialog');
 function feedback(text,error=false){notice.textContent=text;notice.classList.toggle('error',error)}
 const overlays=new Map();let overlaySequence=0;
+function incidentPage(title,content){
+ dash.hidden=true;page.hidden=false;
+ $('.heading h1').textContent=title;
+ $$('.nav>a').forEach((a,i)=>a.classList.toggle('active',views[i]==='incidents'));
+ const body=E('section',undefined,'incident-page-body');
+ body.append(typeof content==='string'?E('p',content):content);
+ page.replaceChildren(body);
+ feedback('');
+}
 function modal(title,content,key){
  const entering=!state.overlay;
  if(entering)state.overlay=key||'info-'+(++overlaySequence);
- overlays.set(state.overlay,{title,content});
- detail.classList.toggle('incident-dialog',state.overlay?.startsWith('incident-'));$('#detail-close').hidden=!!content?.classList?.contains('incident-workspace');$('#detail-title').textContent=title;const body=$('#detail-body');body.replaceChildren();body.append(typeof content==='string'?E('p',content):content);
+ if(!state.overlay.startsWith('incident-'))overlays.set(state.overlay,{title,content});
+ $('#detail-close').hidden=false;$('#detail-title').textContent=title;const body=$('#detail-body');body.replaceChildren();body.append(typeof content==='string'?E('p',content):content);
  if(!detail.open)detail.showModal();if(entering)remember(true,true);
 }
 function closeOverlay(){
  if(state.busy){feedback('처리 중입니다. 결과를 확인한 뒤 닫아주세요.');return}
  if(!detail.open&&!state.overlay)return;
+ if(detail.open&&state.overlay?.startsWith('incident-')){detail.close();return}
  if(history.state?.schutzOverlay&&state.overlay){history.back();return}
  state.overlay=null;detail.close();remember(false);
 }
 async function restoreOverlay(){
  if(!state.overlay)return;
- if(state.overlay.startsWith('incident-')){await openIncident(state.overlay.slice(9));return}
+ if(state.overlay.startsWith('incident-'))return;
  const saved=overlays.get(state.overlay);if(saved)modal(saved.title,saved.content);else{state.overlay=null;remember(false)}
 }
 $('#detail-close').onclick=closeOverlay;detail.onclick=e=>{if(e.target===detail)closeOverlay()};detail.addEventListener('cancel',e=>{e.preventDefault();closeOverlay()});
@@ -151,12 +161,12 @@ async function refreshAutomatically(){
  if(!state.user||state.mode.mode==='snapshot'||document.hidden||state.busy||automaticRefreshPending||viewRequests||state.view==='settings')return;
  automaticRefreshPending=true;
  try{
-  if(detail.open){
+  if(state.overlay?.startsWith('incident-')&&!detail.open){
    const id=state.overlay?.startsWith('incident-')&&state.overlay.slice(9);
    if(!id||!$('.incident-detail-header'))return;
    const generation=state.generation;
    const d=await api('/api/incidents/'+encodeURIComponent(id));
-   if(!detail.open||state.overlay!=='incident-'+id||state.generation!==generation||state.busy)return;
+   if(state.overlay!=='incident-'+id||state.generation!==generation||state.busy)return;
    const jobs=d.jobs||[];
    for(const [selector,render] of [
     ['.incident-ai-card',()=>renderAIJob(jobs.find(j=>j.kind==='ai'))],
@@ -183,6 +193,7 @@ async function loadView(background=false){
 async function renderView(background){if(!state.user)return;const g=++state.generation;if(!background)feedback('조회 중…');dash.hidden=state.view!=='dashboard';page.hidden=state.view==='dashboard';if(!background){page.replaceChildren();closeAlerts();}$('.heading h1').textContent={dashboard:'운영 대시보드',incidents:'사건 관리',services:'서비스 모니터링',resources:'서버 리소스',collectors:'수집 상태',logs:'로그 분석',settings:'설정'}[state.view];
  $$('.nav>a').forEach((a,i)=>a.classList.toggle('active',views[i]===state.view));$$('.periods button').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.window===state.window)));
  try{
+ if(state.overlay?.startsWith('incident-')){await openIncident(state.overlay.slice(9));return}
  const dashboardRequest=api('/api/dashboard'), observationRequest=getObservation();
  if(state.view!=='dashboard')refreshNotificationIndicators(g,dashboardRequest,observationRequest);
  if(state.view==='settings'){showSettings();feedback('');return}
@@ -466,15 +477,21 @@ function incidentContext(d,j){
 const incidentDrafts=new Map(),incidentParents=new Map();
 function returnToIncidentList(){if(state.busy)return;state.overlay=null;detail.close();state.view='incidents';remember();Promise.resolve(loadView()).then(()=>window.scrollTo?.({top:state.listScroll,behavior:'instant'}))}
 async function openIncident(id){
- if(state.busy)return;const key='incident-'+id,previous=state.overlay?.startsWith('incident-')?state.overlay.slice(9):null;
+ const key='incident-'+id;if(state.busy&&state.overlay!==key)return;const previous=state.overlay?.startsWith('incident-')?state.overlay.slice(9):null;
  if(!previous){state.listScroll=window.scrollY||0;incidentSections.delete(id)}else if(previous!==id)incidentParents.set(id,previous);
- if(state.overlay&&state.overlay!==key){state.overlay=null;detail.close()}
- modal('사건 상세','조회 중…',key);const generation=state.generation;
+ if(state.overlay!==key){
+  if(previous)cacheIncidentDraft(previous);
+  else if(!state.overlay)remember(false);
+  state.overlay=key;detail.close();remember(true,true);
+  window.scrollTo?.({top:0,behavior:'instant'});
+ }
+ const generation=++state.generation;
+ incidentPage('사건 상세','조회 중…');
  const rows=await Promise.allSettled([api('/api/incidents/'+encodeURIComponent(id)),api('/api/dashboard')]);
  if(!state.user){detail.close();return}if(state.overlay!==key||generation!==state.generation)return;
  if(rows[0].status==='fulfilled'){const d=rows[0].value;d.current_view=rows[1].status==='fulfilled'?{status:'ok',data:rows[1].value}:{status:'unavailable'};incidentDetail(d);return}
  const error=rows[0].reason,box=E('div',undefined,'incident-error');box.setAttribute('role','alert');box.append(E('h3','원본 사건 조회 불가'),E('p',error.status===403?'접근 권한을 확인해주세요. 원본의 삭제 여부는 확정할 수 없습니다.':error.status===404?'사건을 찾을 수 없습니다. 삭제 또는 접근 범위를 확인해주세요.':error.status===401?'로그인이 필요합니다.':'서버 또는 네트워크 문제로 조회하지 못했습니다.'),E('p',error.message));
- const parent=incidentParents.get(id);if(parent)box.append(button('원래 사건 상세로 돌아가기',()=>openIncident(parent)));box.append(button('목록으로 돌아가기',returnToIncidentList));modal('사건 조회 실패',box,key)
+ const parent=incidentParents.get(id);if(parent)box.append(button('원래 사건 상세로 돌아가기',()=>openIncident(parent)));box.append(button('목록으로 돌아가기',returnToIncidentList));incidentPage('사건 조회 실패',box)
 }
 function safeError(code){return typeof code==='string'&&/^[A-Z0-9_]{1,60}$/.test(code)?code:'오류 코드 미제공'}
 function attemptHistory(job){const more=E('details',undefined,'attempt-history');more.append(E('summary','시도 이력 보기'));if(!job?.history?.length)more.append(E('p','실제 시도 기록이 없습니다.','read-muted'));else for(const a of job.history){const row=E('div',undefined,'attempt-row');row.append(E('b',(Number.isInteger(a.number)?a.number+'회':'시도 번호 미제공')+' · '+name(a.outcome)),E('span','시작 '+contextDate(a.started_at)+' · 완료 '+contextDate(a.finished_at)+' (KST)'));if(a.error_code)row.append(E('code',safeError(a.error_code)));more.append(row)}return more}
@@ -512,7 +529,7 @@ function evidencePanel(d){
  for(const[at,ev]of(d.evidence||[]).entries()){const row=E('tr');row.hidden=at>=5;row.append(E('td',String(at+1)),E('td',contextDate(ev.occurred_at)),E('td',ev.id));const cell=E('td'),more=E('details');more.append(E('summary',({check:'기능 점검',prometheus:'Prometheus 경보',login:'로그인 이벤트',security:'보안 접근 거부'}[ev.kind]||'입력 근거')+' · 원문 보기'),pretty(ev.payload));cell.append(more);row.append(cell);body.append(row)}table.append(body);wrap.append(table);panel.append(wrap);if(!body.children.length)panel.append(E('p','제공된 탐지 근거가 없습니다.','read-note'));if(body.children.length>5){let expanded=false;const toggle=button('전체 근거 보기 ('+body.children.length+'건)',()=>{expanded=!expanded;for(const[at,row]of [...body.children].entries())row.hidden=!expanded&&at>=5;toggle.textContent=expanded?'최근 5건만 보기':'전체 근거 보기 ('+body.children.length+'건)';toggle.setAttribute('aria-expanded',String(expanded))});toggle.setAttribute('aria-expanded','false');panel.append(toggle)}return panel;
 }
 function cacheIncidentDraft(id){const action=$('#action-content'),resolution=$('#resolution'),check=$('#test-stopped');const old=incidentDrafts.get(id)||{};incidentDrafts.set(id,{action:action?action.value:old.action||'',resolution:resolution?resolution.value:old.resolution||'',stopped:check?check.checked:old.stopped||false})}
-function restoreIncidentDraft(id){const draft=incidentDrafts.get(id);if(!draft)return;const action=$('#action-content'),resolution=$('#resolution'),check=$('#test-stopped');if(action)action.value=draft.action;if(resolution)resolution.value=draft.resolution;if(check){check.checked=draft.stopped;check.onchange?.()}if((!action&&draft.action)||(!resolution&&draft.resolution)){const saved=E('details');saved.append(E('summary','저장되지 않은 입력 보기'),E('p',draft.action||draft.resolution));$('#detail-body').append(saved)}}
+function restoreIncidentDraft(id){const draft=incidentDrafts.get(id);if(!draft)return;const action=$('#action-content'),resolution=$('#resolution'),check=$('#test-stopped');if(action)action.value=draft.action;if(resolution)resolution.value=draft.resolution;if(check){check.checked=draft.stopped;check.onchange?.()}if((!action&&draft.action)||(!resolution&&draft.resolution)){const saved=E('details');saved.append(E('summary','저장되지 않은 입력 보기'),E('p',draft.action||draft.resolution));$('.incident-page-body').append(saved)}}
 const incidentServices={
  a:{label:'직원 포털 A',color:'#1d65c1'},
  b:{label:'홈페이지 B',color:'#8040b8'},
@@ -599,7 +616,7 @@ function incidentSummary(d,ai,showAnalysis){
 const incidentSections=new Map();
 function incidentDetail(d){
  const root=E('div',undefined,'incident-workspace'),jobs=d.jobs||[],ai=jobs.find(j=>j.kind==='ai');
- const nav=E('nav',undefined,'incident-detail-nav');nav.setAttribute('aria-label','사건 상세 이동');const back=button('← 목록으로 돌아가기',returnToIncidentList);back.className='incident-back outline';nav.append(back,button('화면 닫기',closeOverlay));root.append(nav);
+ const nav=E('nav',undefined,'incident-detail-nav');nav.setAttribute('aria-label','사건 상세 이동');const back=button('← 목록으로 돌아가기',returnToIncidentList);back.className='incident-back outline';nav.append(back);root.append(nav);
  const header=E('section',undefined,'incident-detail-header'),heading=E('div',undefined,'incident-title-row');heading.append(E('h2',(d.synthetic?'[모의] ':'')+incidentService(d)+' · '+name(d.rule_id)),statusBadge(name(d.status),d.status==='closed'?'success':'info'),statusBadge(severityLabel(d.severity),d.severity==='critical'?'failed':d.severity==='warning'?'pending':'unknown'));root.append(header);header.append(heading,E('p',(d.target_display||name(d.target_id))+' · '+d.rule_id));
  const idRow=E('div',undefined,'incident-id-row'),input=E('textarea');input.rows=2;input.value=d.id;input.readOnly=true;input.setAttribute('aria-label','전체 사건 ID');const copied=E('p',undefined,'read-muted');copied.setAttribute('role','status');const copy=button('ID 복사',()=>copyIncidentID(d.id,copy,copied,input));idRow.append(E('b','사건 ID'),input,copy);const identifiers=E('details',undefined,'incident-identifiers');
  identifiers.append(E('summary','사건 ID 및 복사'),idRow,copied);
@@ -646,14 +663,14 @@ function incidentDetail(d){
  }else if(d.status!=='closed')closure.append(E('p','접수와 조치 기록 후 복구 조건을 확인하고 종료할 수 있습니다.','read-muted'));
  if(['unauthorized_read','unauthorized_write'].includes(d.rule_id))closure.append(E('p','실패가 멈추고 사건이 종료되어도 정보 미노출·데이터 미변경·추가 차단 완료가 자동 증명되지는 않습니다. 시험 결과와 실제 조치를 별도로 기록하세요.','read-note'));
  sections.actions.append(closure,renderSlackJobs(jobs,d));
- modal('사건 상세',root);restoreIncidentDraft(d.id);if(window.SchutzDrafts&&writable)window.SchutzDrafts.attach(d,api);$('#detail-title').tabIndex=-1;$('#detail-title').focus?.();
+ incidentPage('사건 상세',root);restoreIncidentDraft(d.id);if(window.SchutzDrafts&&writable)window.SchutzDrafts.attach(d,api);const title=$('.heading h1');title.tabIndex=-1;title.focus?.({preventScroll:true});
 }
 async function mutate(id,kind,payload){
- if(state.busy||!state.mode.writes_enabled)return;cacheIncidentDraft(id);state.busy=true;const controls=[...detail.querySelectorAll('button')];controls.forEach(b=>b.disabled=true);const original=new Map(controls.map(b=>[b,b.textContent]));const active=controls.find(b=>b.textContent===({accept:'사건 접수',actions:'조치 기록 저장',close:'사건 종료'}[kind]));if(active)active.textContent='처리 중…';detail.setAttribute('aria-busy','true');let warning,failed=false;
+ if(state.busy||!state.mode.writes_enabled)return;cacheIncidentDraft(id);state.busy=true;const controls=[...page.querySelectorAll('button')];controls.forEach(b=>b.disabled=true);const original=new Map(controls.map(b=>[b,b.textContent]));const active=controls.find(b=>b.textContent===({accept:'사건 접수',actions:'조치 기록 저장',close:'사건 종료'}[kind]));if(active)active.textContent='처리 중…';page.setAttribute('aria-busy','true');let warning,failed=false;
  try{const result=await api('/api/incidents/'+encodeURIComponent(id)+'/'+kind,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':state.csrf},body:JSON.stringify(payload)});warning=kind==='revoke-test-sessions'?(result.status==='succeeded'?'서비스의 세션 폐기 결과를 확인했습니다. 기존 세션 접근 거부는 별도 확인해주세요.':result.status==='unknown'?'실행 결과 미확인입니다. 같은 실행 ID로 재확인해주세요.':'세션 폐기 실행 실패입니다. 실행 이력을 확인해주세요.'):'처리 결과를 저장했습니다.';const draft=incidentDrafts.get(id)||{};if(kind==='actions')draft.action='';if(kind==='close')incidentDrafts.delete(id);else incidentDrafts.set(id,draft)}
  catch(e){failed=true;warning=(e.status===409?'사건 상태 또는 종료 조건이 변경됐습니다. 최신 상태를 다시 조회했습니다. ':'')+e.message+(Array.isArray(e.details)?'\n'+e.details.map(r=>reasons[r]||r).join('\n'):'');if(!e.status)warning+=' 요청 결과를 확인하기 전에는 같은 작업을 다시 보내지 마세요.';if(e.status===403)try{await restoreContext(false)}catch{}}
- finally{state.busy=false;controls.forEach(b=>{b.disabled=false;b.textContent=original.get(b)});detail.setAttribute('aria-busy','false')}
- if(state.user){await loadView();await openIncident(id);const p=E('p',warning,failed?'notice error':'notice');p.setAttribute('role','status');$('#detail-body').prepend(p)}
+ finally{state.busy=false;controls.forEach(b=>{b.disabled=false;b.textContent=original.get(b)});page.setAttribute('aria-busy','false')}
+ if(state.user){await loadView();const p=E('p',warning,failed?'notice error':'notice');p.setAttribute('role','status');$('.incident-page-body')?.prepend(p)}
 }
 
 function pageTitle(title,o){page.append(E('h2',title),E('p',date(o.range_start)+' ~ '+date(o.as_of)+' (KST) · '+o.step_seconds+'초 간격'))}
@@ -712,7 +729,11 @@ function showServices(o){const key=state.service,entry=publicRequestPaths[key],d
  if(entry){
   const status=serviceDetailStatus(o,servers,key);
   head.append(uiIcon('app'),E('h3',entry.label),serviceStatusBadge(status.kind));
-  panel.append(head,publicHealthSummary(o,entry),publicHealthChart(o,entry,def,false),E('p','앱 응답시간 p95 (ms)','svc-label'),E('strong',publicLatencyText(o,key,metric),'service-main-value'));
+  const healthRow=E('div',undefined,'service-detail-chart-row');
+  const healthSummary=E('section',undefined,'service-detail-box public-health-summary');
+  healthSummary.append(publicHealthSummary(o,entry));
+  healthRow.append(publicHealthChart(o,entry,def,false),healthSummary);
+  panel.append(head,healthRow,E('p','앱 응답시간 p95 (ms)','svc-label'),E('strong',publicLatencyText(o,key,metric),'service-main-value'));
  }else{
   head.append(uiIcon(key),E('h3',def.name+' · '+def.target),serviceBadge(servers,key));
   panel.append(head,E('p',def.label+' (ms)','svc-label'),E('strong',metric?.status==='no_data'?'미수집':metricText(metric,'ms'),'service-main-value'));

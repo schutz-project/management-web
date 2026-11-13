@@ -296,3 +296,5 @@
   gap: .4rem;
   flex-basis: 100%;
 }
+
+.public-health-summary .svc-caption{display:grid;gap:8px;margin:0}
