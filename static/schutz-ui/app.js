@@ -366,6 +366,24 @@ function sampleSummary(points){const values=resourceValues(points).map(p=>p[1]);
 
 function hostTitle(h){return (h.server_name||'서버')+(h.instance?' · '+h.instance:' · 수집 대상 미설정')}
 
+function dashboardGauge(label,value,color,valid,missing,max=100,accessibleLabel=label){
+ const card=E('article',undefined,'dashboard-gauge');
+ const graphic=svg('svg',{viewBox:'0 0 144 82','aria-hidden':'true'});
+ const arc='M 12 72 A 60 60 0 0 1 132 72';
+ graphic.append(svg('path',{d:arc,fill:'none',stroke:'#e4edf7','stroke-width':12}));
+ if(valid&&value>0)graphic.append(svg('path',{d:arc,fill:'none',stroke:color,'stroke-width':12,pathLength:100,'stroke-dasharray':(100*value/max)+' 100'}));
+ const meter=E('div',undefined,'dashboard-meter');
+ meter.append(graphic,E('strong',valid?fmt(value,2)+' %':'—','res-value'));
+ if(valid){
+  meter.setAttribute('role','meter');meter.setAttribute('aria-label',accessibleLabel);
+  meter.setAttribute('aria-valuemin','0');meter.setAttribute('aria-valuemax',String(max));meter.setAttribute('aria-valuenow',value);
+ }
+ const scale=E('div',undefined,'gauge-scale');scale.append(E('span','0%'),E('span',max+'%'));
+ card.append(E('h4',label),meter,scale);
+ if(!valid)card.append(E('small',missing));
+ return card;
+}
+
 const demoCpuRows=[
  ['a-normal','직원 포털 A · 정상','#1d65c1'],
  ['a-load','직원 포털 A · 부하 시험','#b4233d'],
@@ -374,7 +392,7 @@ const demoCpuRows=[
 ];
 function demoCpuPanel(o,summary=false){
  const data=o.resources.demo_cpu;
- const panel=E('section',undefined,'read-section');
+ const panel=E('section',undefined,summary?'panel host-overview-card dashboard-demo-cpu':'read-section');
  panel.append(E('h3','시험용 서비스 컨테이너 CPU'),
   E('p','코어 1개 기준 · 100%는 1코어 사용 · 5분 평균','read-muted'));
  const grid=E('div',undefined,summary?'read-stats':'resource-compare-grid');
@@ -382,7 +400,8 @@ function demoCpuPanel(o,summary=false){
  const axis=incidentMetricAxis()||range;
  for(const [key,label,color] of demoCpuRows){
   const item=data.items?.[key],value=item?.value;
-  const card=summary?summaryCard(label,Number.isFinite(value)?fmt(value,2)+' %':data.status==='unavailable'?'조회 실패':'데이터 없음'):E('article',undefined,'resource-compare-host');
+  const valid=data.status!=='unavailable'&&Number.isFinite(value)&&value>=0;
+  const card=summary?dashboardGauge(label,value,color,valid,data.status==='unavailable'?'조회 실패':'데이터 없음',valid?Math.max(100,Math.ceil(value/100)*100):100):E('article',undefined,'resource-compare-host');
   if(!summary){
    card.append(E('h4',label));
    const plot=E('div');
@@ -413,21 +432,8 @@ function renderResources(o){
   resourceKeys.forEach((key,i)=>{
    const history=host?.history?.[key],value=host?.[key];
    const valid=host?.status==='ok'&&(!history||history.status==='ok')&&Number.isFinite(value)&&value>=0&&value<=100;
-   const card=E('article',undefined,'dashboard-gauge');
-   const graphic=svg('svg',{viewBox:'0 0 144 82','aria-hidden':'true'});
-   const arc='M 12 72 A 60 60 0 0 1 132 72';
-   graphic.append(svg('path',{d:arc,fill:'none',stroke:'#e4edf7','stroke-width':12}));
-   if(valid&&value>0)graphic.append(svg('path',{d:arc,fill:'none',stroke:resourceColors[i],'stroke-width':12,pathLength:100,'stroke-dasharray':value+' 100'}));
-   const meter=E('div',undefined,'dashboard-meter');
-   meter.append(graphic,E('strong',valid?fmt(value)+' %':'—','res-value'));
-   if(valid){
-    meter.setAttribute('role','meter');meter.setAttribute('aria-label',label+' '+resourceNames[i]);
-    meter.setAttribute('aria-valuemin','0');meter.setAttribute('aria-valuemax','100');meter.setAttribute('aria-valuenow',value);
-   }
-   const scale=E('div',undefined,'gauge-scale');scale.append(E('span','0%'),E('span','100%'));
-   card.append(E('h4',resourceNames[i]+' 사용률'),meter,scale);
-   if(!valid)card.append(E('small',matches.length>1?stateText:history?.status==='unavailable'?'조회 실패':metricCollection(host,history)));
-   gauges.append(card);
+   gauges.append(dashboardGauge(resourceNames[i]+' 사용률',value,resourceColors[i],valid,
+    matches.length>1?stateText:history?.status==='unavailable'?'조회 실패':metricCollection(host,history),100,label+' '+resourceNames[i]));
   });
   section.append(heading);
   if(role==='service')section.append(E('small','실행 서비스 · 직원 포털 A · 홈페이지 B · 커뮤니티 C','overview-note'));
@@ -616,7 +622,7 @@ function incidentTiming(d){
  box.append(milestones);
  const service=incidentService(d);
  const metricKey={'직원 포털 A':'app_ms','홈페이지 B':'homepage_ms','커뮤니티 C':'community_ms'}[service];
- if(metricKey&&state.mode.mode!=='snapshot'){
+ if((metricKey||d.rule_id==='schutz_test_cpu_high')&&state.mode.mode!=='snapshot'){
   const current=Date.now(),start=detected-15*60000,end=Math.min(current,(verified?recovered:detected)+15*60000);
   if(end>=detected&&end-start>=60000&&end-start<=365*DAY_MS){
    const range=validCustomRange(new Date(start).toISOString(),new Date(end).toISOString());
@@ -624,11 +630,12 @@ function incidentTiming(d){
     const serviceKey={app_ms:'app',homepage_ms:'homepage',community_ms:'community'}[metricKey];
     const links=E('div',undefined,'resource-compare-controls');
     links.append(
-     button('서버 리소스 상세 보기',()=>openIncidentMetrics('resources',null,range,detected)),
-     button('서비스 지표 보기',()=>openIncidentMetrics('services',serviceKey,range,detected))
+     button('서버 리소스 상세 보기',()=>openIncidentMetrics('resources',null,range,detected))
     );
+    if(serviceKey)links.append(button('서비스 지표 보기',()=>openIncidentMetrics('services',serviceKey,range,detected)));
     box.append(links);
    }
+   if(!metricKey)return box;
    const plot=E('div',undefined,'incident-metric-chart');
    plot.append(E('p','사건 시점의 응답시간 조회 중','read-muted'));box.append(plot);
    const params=new URLSearchParams({window:'custom',start:new Date(start).toISOString(),end:new Date(end).toISOString()});
