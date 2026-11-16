@@ -80,13 +80,13 @@ $('#auth-retry').onclick=()=>boot();
 async function logout(){if(state.mode.mode==='snapshot'){modal('저장 데이터 모드','서버 로그인 없이 저장 데이터를 표시 중입니다.');return}if(state.busy)return;state.busy=true;try{await api('/api/auth/logout',{method:'POST',headers:{'X-CSRF-Token':state.csrf}});signedOut('로그아웃했습니다.');await restoreContext(false)}catch(e){feedback(e.message,true)}finally{state.busy=false}}
 wire($('.profile'),()=>{const p=E('div');p.append(E('p','로그인 계정: '+state.user.username),button('로그아웃',async()=>{detail.close();await logout()}));modal('계정',p)});
 const DAY_MS=86400000, YEAR_MS=365*DAY_MS;
-function locationState(){const p=new URLSearchParams(location.hash.slice(1));state.incidentScope=['operational','synthetic','all'].includes(p.get('incident_scope'))?p.get('incident_scope'):'operational';const v=p.get('view');state.view=['dashboard','incidents','services','resources','collectors','logs','settings'].includes(v)?v:'dashboard';const w=p.get('window');state.window=['live','15m','1h','6h','24h','custom'].includes(w)?w:'15m';state.customRange=validCustomRange(p.get('start'),p.get('end'));if(state.window==='custom'&&!state.customRange)state.window='15m';state.resourceKey=['cpu','memory','disk'].includes(p.get('resource'))?p.get('resource'):'cpu';state.resourceHost=(p.get('host')||'').slice(0,120)||null;state.service=['app','database','proxy','homepage','community'].includes(p.get('service'))?p.get('service'):'app';state.overlay=/^(?:incident-[a-f0-9-]{36}|info-[0-9]+)$/.test(p.get('overlay')||'')?p.get('overlay'):null;state.filter=['open','closed','all'].includes(p.get('status'))?p.get('status'):'open';state.q=(p.get('q')||'').slice(0,80);state.severity=['all','critical','warning','unknown'].includes(p.get('severity'))?p.get('severity'):'all';state.stage=['all','new','accepted','in_progress','closed'].includes(p.get('stage'))?p.get('stage'):'all';state.page=Math.max(1,Math.min(100000,Number(p.get('page'))||1));const direct=!location.hash&&/^\/incidents\/([a-f0-9-]{36})$/.exec(location.pathname);if(direct){state.view='incidents';state.overlay='incident-'+direct[1]}}
-function remember(push=true,overlay=false){const p=new URLSearchParams({view:state.view,window:state.window});if(state.incidentScope!=='operational')p.set('incident_scope',state.incidentScope);if(state.view==='incidents'){p.set('status',state.filter);p.set('page',String(state.page));if(state.q)p.set('q',state.q);if(state.severity!=='all')p.set('severity',state.severity);if(state.stage!=='all')p.set('stage',state.stage)}if(state.view==='services')p.set('service',state.service);if(state.view==='resources'){p.set('resource',state.resourceKey);if(state.resourceHost)p.set('host',state.resourceHost)}if(state.overlay)p.set('overlay',state.overlay);if(state.window==='custom'&&state.customRange){p.set('start',state.customRange.start);p.set('end',state.customRange.end)}const hash='#'+p;const marker={schutz:true,schutzOverlay:overlay,listScroll:state.listScroll};if(push&&location.hash!==hash)history.pushState(marker,'',hash);else history.replaceState(push?(history.state||marker):marker,'',hash)}
+function locationState(){const p=new URLSearchParams(location.hash.slice(1));state.incidentScope=['operational','synthetic','all'].includes(p.get('incident_scope'))?p.get('incident_scope'):'operational';const v=p.get('view');state.view=['dashboard','incidents','services','resources','collectors','logs','settings'].includes(v)?v:'dashboard';const w=p.get('window');state.window=['live','15m','1h','6h','24h','custom'].includes(w)?w:'15m';state.customRange=validCustomRange(p.get('start'),p.get('end'));if(state.window==='custom'&&!state.customRange)state.window='15m';state.detectedAt=state.customRange&&state.window==='custom'?p.get('detected'):null;state.resourceKey=['cpu','memory','disk'].includes(p.get('resource'))?p.get('resource'):'cpu';state.resourceHost=(p.get('host')||'').slice(0,120)||null;state.service=['app','database','proxy','homepage','community'].includes(p.get('service'))?p.get('service'):'app';state.overlay=/^(?:incident-[a-f0-9-]{36}|info-[0-9]+)$/.test(p.get('overlay')||'')?p.get('overlay'):null;state.filter=['open','closed','all'].includes(p.get('status'))?p.get('status'):'open';state.q=(p.get('q')||'').slice(0,80);state.severity=['all','critical','warning','unknown'].includes(p.get('severity'))?p.get('severity'):'all';state.stage=['all','new','accepted','in_progress','closed'].includes(p.get('stage'))?p.get('stage'):'all';state.page=Math.max(1,Math.min(100000,Number(p.get('page'))||1));const direct=!location.hash&&/^\/incidents\/([a-f0-9-]{36})$/.exec(location.pathname);if(direct){state.view='incidents';state.overlay='incident-'+direct[1]}}
+function remember(push=true,overlay=false){const p=new URLSearchParams({view:state.view,window:state.window});if(state.incidentScope!=='operational')p.set('incident_scope',state.incidentScope);if(state.view==='incidents'){p.set('status',state.filter);p.set('page',String(state.page));if(state.q)p.set('q',state.q);if(state.severity!=='all')p.set('severity',state.severity);if(state.stage!=='all')p.set('stage',state.stage)}if(state.view==='services')p.set('service',state.service);if(state.view==='resources'){p.set('resource',state.resourceKey);if(state.resourceHost)p.set('host',state.resourceHost)}if(state.overlay)p.set('overlay',state.overlay);if(state.window==='custom'&&state.customRange){p.set('start',state.customRange.start);p.set('end',state.customRange.end);if(state.detectedAt)p.set('detected',state.detectedAt)}const hash='#'+p;const marker={schutz:true,schutzOverlay:overlay,listScroll:state.listScroll};if(push&&location.hash!==hash)history.pushState(marker,'',hash);else history.replaceState(push?(history.state||marker):marker,'',hash)}
 function go(v,filter,service){if(state.busy)return;state.overlay=null;detail.close();state.view=v;if(filter)state.filter=filter;if(service)state.service=service;state.page=1;remember();loadView();window.scrollTo?.({top:0,behavior:'instant'})}
 locationState();window.addEventListener('popstate',async()=>{locationState();detail.close();if(state.user){await loadView();await restoreOverlay();if(!state.overlay&&state.view==='incidents')window.scrollTo?.({top:history.state?.listScroll||0,behavior:'instant'})}});
 const views=['dashboard','incidents','services','resources','collectors','logs','settings'];
 $$('.nav>a').forEach((a,i)=>{a.href='#view='+views[i];a.onclick=e=>{e.preventDefault();go(views[i])}});
-const periods=['live','15m','1h','6h','24h'];$$('.periods button').forEach((b,i)=>{b.dataset.window=periods[i];b.onclick=()=>{state.overlay=null;detail.close();state.window=periods[i];remember();loadView()}});
+const periods=['live','15m','1h','6h','24h'];$$('.periods button').forEach((b,i)=>{b.dataset.window=periods[i];b.onclick=()=>{state.overlay=null;detail.close();state.window=periods[i];state.detectedAt=null;remember();loadView()}});
 const calendarButton=button('사용자 지정 📅',()=>openCalendar());calendarButton.dataset.window='custom';calendarButton.className='custom-period';$('.periods').append(calendarButton);
 function earliestCustomDate(now){return Math.floor((now+9*3600000)/DAY_MS)*DAY_MS-9*3600000-YEAR_MS}
 function minuteStart(value){return Math.floor(value/60000)*60000}
@@ -148,7 +148,7 @@ function openCalendar(){
   const end=endTime?endDay+'T'+endTime+'+09:00':endDay===today?new Date(current).toISOString():endDay+'T23:59:59.999999+09:00';
   const range=validCustomRange(inputs.start.day.value+'T'+startTime+'+09:00',end);
   if(!range){error.textContent='기간을 확인해주세요. 최근 365일 안에서 시작과 종료를 1분 이상 차이 나게 선택하세요.';return}
-  state.customRange=range;state.window='custom';state.overlay=null;
+  state.customRange=range;state.detectedAt=null;state.window='custom';state.overlay=null;
   detail.close();remember(false);loadView();
  };
  modal('사용자 지정 기간',form);
@@ -215,9 +215,9 @@ async function renderView(background){if(!state.user)return;const g=++state.gene
  }catch(e){if(g!==state.generation)return;feedback(e.message,true);if(!page.hidden)page.append(E('p','데이터를 가져오지 못했습니다. 새로고침으로 다시 확인해 주세요.'))}}
 function modeNote(){if(state.window==='custom')return '사용자 지정 기간 · '+date(state.customRange?.start)+' ~ '+date(state.customRange?.end)+' (KST) · 사건 집계·목록과 과거 지표에 적용 · 상단 상태·경보·최근 로그는 현재 조회 기준';return state.mode.mode==='snapshot'?'저장 데이터 모드 · '+date(state.data?.as_of||state.mode.as_of)+' (KST) · 실시간 아님':(state.view==='dashboard'?'15초마다 자동 조회 · ':'')+'한국 시간(KST) · '+(state.mode.writes_enabled?'조회·사건 처리 연결':'조회 전용 · 사건 변경 비활성화')}
 const NS='http://www.w3.org/2000/svg';function svg(t,a,text){const e=document.createElementNS(NS,t);for(const[k,v]of Object.entries(a))e.setAttribute(k,v);if(text!==undefined)e.textContent=text;return e}
-function chart(holder,points,color,ceiling=null){holder.replaceChildren();const data=points||[],values=data.filter(p=>Number.isFinite(p[1]));if(!values.length){holder.append(E('small','그래프 데이터 없음'));return}const resource=ceiling!==null,w=resource?280:150,h=resource?110:36,l=resource?34:3,r=8,t=12,b=resource?22:4,max=ceiling||Math.max(...values.map(p=>p[1]),.001),start=data[0][0],end=data.at(-1)[0];const X=x=>l+(x-start)/(end-start||1)*(w-l-r),Y=y=>t+(1-y/max)*(h-t-b);const s=svg('svg',{viewBox:`0 0 ${w} ${h}`,width:'100%',height:'100%',role:'img','aria-label':resource?'사용률 0~100% · 실제 조회 표본':'실제 조회 표본 추이'});
+function chart(holder,points,color,ceiling=null,axis=null){holder.replaceChildren();const data=points||[],values=data.filter(p=>Number.isFinite(p[1]));if(!values.length){holder.append(E('small','그래프 데이터 없음'));return}const resource=ceiling!==null,w=resource?280:150,h=resource?110:36,l=resource?34:3,r=8,t=12,b=resource?22:4,max=ceiling||Math.max(...values.map(p=>p[1]),.001),start=axis?.start??data[0][0],end=axis?.end??data.at(-1)[0];const X=x=>l+(x-start)/(end-start||1)*(w-l-r),Y=y=>t+(1-y/max)*(h-t-b);const s=svg('svg',{viewBox:`0 0 ${w} ${h}`,width:'100%',height:'100%',role:'img','aria-label':resource?'사용률 0~100% · 실제 조회 표본':'실제 조회 표본 추이'});
  if(resource){for(const v of [0,50,100]){s.append(svg('line',{x1:l,x2:w-r,y1:Y(v),y2:Y(v),stroke:'#e1e9f3'}));s.append(svg('text',{x:0,y:Y(v)+3,'font-size':10,fill:'#6e85a1'},v+'%'))}for(const v of [start,end])s.append(svg('text',{x:X(v),y:h-3,'text-anchor':v===start?'start':'end','font-size':10,fill:'#6e85a1'},clock(v)))}
- let segment=[];const draw=()=>{if(segment.length)s.append(svg('polyline',{points:segment.map(p=>X(p[0])+','+Y(p[1])).join(' '),fill:'none',stroke:color,'stroke-width':2}));segment=[]};let prev=null;for(const p of data){if(!Number.isFinite(p[1])||(prev&&p[0]-prev>(state.data?.step_seconds||30)*1500))draw();if(Number.isFinite(p[1]))segment.push(p);prev=p[0]}draw();holder.append(s)}
+ let segment=[];const draw=()=>{if(segment.length)s.append(svg('polyline',{points:segment.map(p=>X(p[0])+','+Y(p[1])).join(' '),fill:'none',stroke:color,'stroke-width':2}));segment=[]};let prev=null;for(const p of data){if(!Number.isFinite(p[1])||(prev&&p[0]-prev>(state.data?.step_seconds||30)*1500))draw();if(Number.isFinite(p[1]))segment.push(p);prev=p[0]}draw();if(axis?.detected>=start&&axis.detected<=end)s.append(svg('line',{x1:X(axis.detected),x2:X(axis.detected),y1:t,y2:h-b,stroke:'#b4233d','stroke-dasharray':'3 2'}));holder.append(s)}
 function renderDashboard(d,o,overview){
  $('.heading h1').textContent='운영 대시보드';$('.demo-ribbon').textContent=state.mode.mode==='snapshot'?'실제 데이터 저장본 · 실시간 아님':'API 연결 · '+(state.mode.writes_enabled?'사건 처리 가능':'조회 전용');
  $('.banner-meta .meta-label').textContent='조회 시각 (KST)';$('.meta-value').textContent=date(d?.as_of||o?.as_of);const c=d?.incident_counts;const open=c?c.new+c.accepted+c.in_progress:null;const servers=d?.servers||[];const known=['app','database','proxy'].every(id=>servers.some(x=>x.target_id===id))&&servers.every(x=>x.status==='normal'&&!x.collection_delayed);
@@ -292,12 +292,12 @@ function publicMetricText(metric,unit){
 function auxiliary(o,key){if(publicRequestPaths[key])return [['요청량',publicMetricText(o?.metrics?.[key+'_requests'],'건/초')],['5xx 서버 오류',publicMetricText(o?.metrics?.[key+'_errors'],'건/초')]];const m=o?.metrics||{},p=o?.details,route=k=>{const d=p?.[k],r=d?.items?.find(x=>x.route==='/health');return {status:d?.status==='ok'&&Number.isFinite(r?.value)?'ok':d?.status||'no_data',value:r?.value}};return key==='app'?[['요청량',metricText(m.requests,'건/초'),m.requests],['5xx 서버 오류',metricText(m.errors,'건/초'),m.errors]]:key==='database'?[['연결 수','수집 미설정',null],['활성 세션','수집 미설정',null]]:[['/health 요청량',metricText(route('proxy_requests'),'건/초'),null],['/health 5xx',metricText(route('proxy_errors'),'건/초'),null]]}
 function metricPoints(points){return (points||[]).filter(p=>Number.isFinite(p[0])&&Number.isFinite(p[1])&&p[1]>=0)}
 function serviceStats(points){const values=metricPoints(points).map(p=>p[1]);if(!values.length)return {mean:null,max:null,min:null,std:null,count:0};const mean=values.reduce((a,b)=>a+b,0)/values.length;return {mean,max:Math.max(...values),min:Math.min(...values),std:Math.sqrt(values.reduce((a,b)=>a+(b-mean)**2,0)/values.length),count:values.length}}
-function servicePlot(holder,points,color,label,compact=false,zoom=false,events=null){holder.replaceChildren();const data=points||[],valid=metricPoints(data);if(!valid.length){holder.append(E('p','데이터 없음 · 시계열 미수집 또는 조회 실패','read-muted'));return}const values=valid.map(p=>p[1]),low=Math.min(...values),high=Math.max(...values),pad=Math.max((high-low)*.2,.02),min=zoom?Math.max(0,low-pad):0,rawMax=zoom?high+pad:Math.max(high*1.1,.001),power=10**Math.floor(Math.log10(rawMax)),max=zoom?rawMax:Math.ceil(rawMax/power)*power,w=compact?320:900,h=compact?140:290,l=compact?40:60,r=12,t=15,b=26,start=events?.start??data[0][0],end=events?.end??data.at(-1)[0],X=x=>l+(x-start)/(end-start||1)*(w-l-r),Y=y=>t+(max-y)/(max-min)*(h-t-b);holder.append(E('p',(zoom?'변화 확대 ':'전체 표시 범위 ')+fmt(min,3)+'~'+fmt(max,3)+' ms','service-axis'));const s=svg('svg',{viewBox:`0 0 ${w} ${h}`,width:'100%',height:h,role:'img','aria-label':label+' '+fmt(min,3)+'~'+fmt(max,3)+' ms · 실제 p95 표본'});if(events?.recovered!=null)s.append(svg('rect',{x:X(events.detected),y:t,width:X(events.recovered)-X(events.detected),height:h-b-t,fill:'#fbe8ed'}));for(const v of [min,(min+max)/2,max])s.append(svg('line',{x1:l,x2:w-r,y1:Y(v),y2:Y(v),stroke:'#e3edf7'}),svg('text',{x:l-5,y:Y(v)+3,'text-anchor':'end','font-size':10,fill:'#6982a1'},fmt(v,2)));for(const v of [start,end])s.append(svg('text',{x:X(v),y:h-5,'text-anchor':v===start?'start':'end','font-size':10,fill:'#6982a1'},clock(v)));let segment=[],prev=null;const draw=()=>{if(segment.length){const coords=segment.map(p=>X(p[0])+','+Y(p[1])).join(' ');s.append(svg('polygon',{points:X(segment[0][0])+','+Y(min)+' '+coords+' '+X(segment.at(-1)[0])+','+Y(min),fill:color,'fill-opacity':.1}),svg('polyline',{points:coords,fill:'none',stroke:color,'stroke-width':2.5}))}segment=[]};for(const p of data){if(!Number.isFinite(p[1])||p[1]<0||(prev!==null&&p[0]-prev>(events?.step||state.data?.step_seconds||30)*1500))draw();if(Number.isFinite(p[1])&&p[1]>=0)segment.push(p);prev=p[0]}draw();if(events){
+function servicePlot(holder,points,color,label,compact=false,zoom=false,events=null,unit='ms'){holder.replaceChildren();const data=points||[],valid=metricPoints(data);if(!valid.length){holder.append(E('p','데이터 없음 · 시계열 미수집 또는 조회 실패','read-muted'));return}const values=valid.map(p=>p[1]),low=Math.min(...values),high=Math.max(...values),pad=Math.max((high-low)*.2,.02),min=zoom?Math.max(0,low-pad):0,rawMax=zoom?high+pad:Math.max(high*1.1,.001),power=10**Math.floor(Math.log10(rawMax)),max=zoom?rawMax:Math.ceil(rawMax/power)*power,w=compact?320:900,h=compact?140:290,l=compact?40:60,r=12,t=15,b=26,start=events?.start??data[0][0],end=events?.end??data.at(-1)[0],X=x=>l+(x-start)/(end-start||1)*(w-l-r),Y=y=>t+(max-y)/(max-min)*(h-t-b);holder.append(E('p',(zoom?'변화 확대 ':'전체 표시 범위 ')+fmt(min,3)+'~'+fmt(max,3)+' '+unit,'service-axis'));const s=svg('svg',{viewBox:`0 0 ${w} ${h}`,width:'100%',height:h,role:'img','aria-label':label+' '+fmt(min,3)+'~'+fmt(max,3)+' '+unit+' · 실제 조회 표본'});if(events?.recovered!=null)s.append(svg('rect',{x:X(events.detected),y:t,width:X(events.recovered)-X(events.detected),height:h-b-t,fill:'#fbe8ed'}));for(const v of [min,(min+max)/2,max])s.append(svg('line',{x1:l,x2:w-r,y1:Y(v),y2:Y(v),stroke:'#e3edf7'}),svg('text',{x:l-5,y:Y(v)+3,'text-anchor':'end','font-size':10,fill:'#6982a1'},fmt(v,2)));for(const v of [start,end])s.append(svg('text',{x:X(v),y:h-5,'text-anchor':v===start?'start':'end','font-size':10,fill:'#6982a1'},clock(v)));let segment=[],prev=null;const draw=()=>{if(segment.length){const coords=segment.map(p=>X(p[0])+','+Y(p[1])).join(' ');s.append(svg('polygon',{points:X(segment[0][0])+','+Y(min)+' '+coords+' '+X(segment.at(-1)[0])+','+Y(min),fill:color,'fill-opacity':.1}),svg('polyline',{points:coords,fill:'none',stroke:color,'stroke-width':2.5}))}segment=[]};for(const p of data){if(!Number.isFinite(p[1])||p[1]<0||(prev!==null&&p[0]-prev>(events?.step||state.data?.step_seconds||30)*1500))draw();if(Number.isFinite(p[1])&&p[1]>=0)segment.push(p);prev=p[0]}draw();if(events){
  for(const [when,color] of [[events.detected,'#b4233d'],[events.recovered,'#087851']]){
   if(when==null)continue;
   s.append(svg('line',{x1:X(when),x2:X(when),y1:t,y2:h-b,stroke:color,'stroke-width':2,'stroke-dasharray':'5 3'}));
  }
-}holder.append(s);if(compact)return;const dot=svg('circle',{r:4,fill:color}),cross=svg('line',{y1:t,y2:h-b,stroke:color,'stroke-dasharray':'3 3'});s.append(cross,dot);const output=E('output',undefined,'service-readout'),input=E('input',undefined,'service-scrubber');input.type='range';input.min=0;input.max=valid.length-1;input.value=valid.length-1;input.step=1;input.setAttribute('aria-label',label+' 시각별 표본 선택');const select=index=>{const p=valid[Math.max(0,Math.min(valid.length-1,index))];output.textContent=date(p[0])+' (KST) · '+fmt(p[1],3)+' ms';input.setAttribute('aria-valuetext',output.textContent);dot.setAttribute('cx',X(p[0]));dot.setAttribute('cy',Y(p[1]));cross.setAttribute('x1',X(p[0]));cross.setAttribute('x2',X(p[0]))};input.oninput=()=>select(Number(input.value));s.onpointermove=e=>{const rect=s.getBoundingClientRect(),when=start+Math.max(0,Math.min(1,(e.clientX-rect.left-l*rect.width/w)/((w-l-r)*rect.width/w)))*(end-start);let index=0;valid.forEach((p,i)=>{if(Math.abs(p[0]-when)<Math.abs(valid[index][0]-when))index=i});input.value=index;select(index)};select(valid.length-1);holder.append(output,input);if(zoom)holder.append(E('p','확대 축은 미세 변화 확인용이며 장애 임계치가 아닙니다.','read-muted'))}
+}holder.append(s);if(compact)return;const dot=svg('circle',{r:4,fill:color}),cross=svg('line',{y1:t,y2:h-b,stroke:color,'stroke-dasharray':'3 3'});s.append(cross,dot);const output=E('output',undefined,'service-readout'),input=E('input',undefined,'service-scrubber');input.type='range';input.min=0;input.max=valid.length-1;input.value=valid.length-1;input.step=1;input.setAttribute('aria-label',label+' 시각별 표본 선택');const select=index=>{const p=valid[Math.max(0,Math.min(valid.length-1,index))];output.textContent=date(p[0])+' (KST) · '+fmt(p[1],3)+' '+unit;input.setAttribute('aria-valuetext',output.textContent);dot.setAttribute('cx',X(p[0]));dot.setAttribute('cy',Y(p[1]));cross.setAttribute('x1',X(p[0]));cross.setAttribute('x2',X(p[0]))};input.oninput=()=>select(Number(input.value));s.onpointermove=e=>{const rect=s.getBoundingClientRect(),when=start+Math.max(0,Math.min(1,(e.clientX-rect.left-l*rect.width/w)/((w-l-r)*rect.width/w)))*(end-start);let index=0;valid.forEach((p,i)=>{if(Math.abs(p[0]-when)<Math.abs(valid[index][0]-when))index=i});input.value=index;select(index)};select(valid.length-1);holder.append(output,input);if(zoom)holder.append(E('p','확대 축은 미세 변화 확인용이며 장애 임계치가 아닙니다.','read-muted'))}
 function serviceAuxiliary(o,key){const grid=E('div',undefined,'service-aux');for(const [label,value]of auxiliary(o,key)){const item=E('div');item.append(E('span',label),E('strong',value));grid.append(item)}return grid}
 function lokiStatus(o){
  const results=['portal-api','portal-nginx','schutz-homepage','schutz-community'].map(key=>o?.logs?.[key]);
@@ -352,7 +352,13 @@ function resourceValues(points){return (points||[]).filter(p=>Number.isFinite(p[
 function resourceBounds(values,zoom){if(!zoom||!values.length)return [0,100];const lo=Math.min(...values.map(p=>p[1])),hi=Math.max(...values.map(p=>p[1])),pad=Math.max((hi-lo)*.2,.02);return [Math.max(0,lo-pad),Math.min(100,hi+pad)]}
 
 function resourceChart(holder,points,color,label,options={}){holder.replaceChildren();const data=points||[],values=resourceValues(data);if(!values.length){holder.append(E('p','그래프 데이터 없음','read-muted'));return}const compact=options.compact===true,zoom=options.zoom??(state.graphScale==='zoom'),[min,max]=options.bounds||resourceBounds(values,zoom),w=compact?300:900,h=compact?100:300,l=compact?47:65,r=12,t=15,b=compact?22:32,start=options.range?.[0]??data[0][0],end=options.range?.[1]??data.at(-1)[0],X=x=>l+(x-start)/(end-start||1)*(w-l-r),Y=y=>t+(max-y)/(max-min)*(h-t-b);holder.append(E('p',zoom?'미세 변화 확대 · 축 '+fmt(min,3)+'~'+fmt(max,3)+'%':'전체 축 0~100%','resource-axis-note'));const s=svg('svg',{viewBox:`0 0 ${w} ${h}`,width:'100%',height:String(h),role:'img','aria-label':label+' 사용률 '+fmt(min,3)+'~'+fmt(max,3)+'% · 실제 조회 표본'});for(const v of [min,(min+max)/2,max]){s.append(svg('line',{x1:l,x2:w-r,y1:Y(v),y2:Y(v),stroke:'#dce7f3','stroke-dasharray':'3 3'}),svg('text',{x:l-7,y:Y(v)+4,'text-anchor':'end','font-size':11,fill:'#637d9c'},fmt(v,3)+'%'))}for(const v of [start,end])s.append(svg('text',{x:X(v),y:h-6,'text-anchor':v===start?'start':'end','font-size':11,fill:'#637d9c'},clock(v)));
- let segment=[],prev=null;const draw=()=>{if(segment.length){const coordinates=segment.map(p=>X(p[0])+','+Y(p[1])).join(' ');s.append(svg('polygon',{points:X(segment[0][0])+','+Y(min)+' '+coordinates+' '+X(segment.at(-1)[0])+','+Y(min),fill:color,'fill-opacity':'.11'}),svg('polyline',{points:coordinates,fill:'none',stroke:color,'stroke-width':3,'stroke-linecap':'round','stroke-linejoin':'round'}))}segment=[]};for(const p of data){const valid=Number.isFinite(p[1])&&p[1]>=0&&p[1]<=100;if(!valid||(prev!==null&&p[0]-prev>(state.data?.step_seconds||30)*1500))draw();if(valid)segment.push(p);prev=p[0]}draw();const last=values.at(-1);s.append(svg('circle',{cx:X(last[0]),cy:Y(last[1]),r:4,fill:color,stroke:'#fff','stroke-width':2}));if(compact){holder.append(s);return}const cross=svg('line',{x1:X(last[0]),x2:X(last[0]),y1:t,y2:h-b,stroke:color,'stroke-dasharray':'3 3',opacity:'.5'}),dot=svg('circle',{cx:X(last[0]),cy:Y(last[1]),r:4,fill:color});s.append(cross,dot);const readout=E('output',undefined,'resource-readout');readout.setAttribute('aria-live','off');const slider=E('input',undefined,'resource-scrubber');slider.type='range';slider.min=0;slider.max=values.length-1;slider.step=1;slider.value=values.length-1;slider.setAttribute('aria-label',label+' 시각별 수치 확인');const select=i=>{const p=values[Math.max(0,Math.min(values.length-1,i))];readout.textContent=date(p[0])+' (KST) · '+fmt(p[1],3)+'%';slider.setAttribute('aria-valuetext',readout.textContent);cross.setAttribute('x1',X(p[0]));cross.setAttribute('x2',X(p[0]));dot.setAttribute('cx',X(p[0]));dot.setAttribute('cy',Y(p[1]))};slider.oninput=()=>select(Number(slider.value));s.onpointermove=e=>{const rect=s.getBoundingClientRect(),time=start+Math.max(0,Math.min(1,(e.clientX-rect.left-l*rect.width/w)/((w-l-r)*rect.width/w)))*(end-start);let index=0;values.forEach((p,i)=>{if(Math.abs(p[0]-time)<Math.abs(values[index][0]-time))index=i});slider.value=index;select(index)};select(values.length-1);holder.append(s,readout,slider);const span=Math.max(...values.map(p=>p[1]))-Math.min(...values.map(p=>p[1]));holder.append(E('p',values.length<2?'유효 표본 1개 · 변화 판단 불가':span<.1?'선택 기간 내 변화가 거의 없습니다.':'표시 표본 변동 폭 '+fmt(span,3)+'%p','resource-change'));if(zoom)holder.append(E('p','확대 보기는 사용량이 높은 상태를 뜻하지 않습니다.','resource-axis-note'))}
+ let segment=[],prev=null;const draw=()=>{if(segment.length){const coordinates=segment.map(p=>X(p[0])+','+Y(p[1])).join(' ');s.append(svg('polygon',{points:X(segment[0][0])+','+Y(min)+' '+coordinates+' '+X(segment.at(-1)[0])+','+Y(min),fill:color,'fill-opacity':'.11'}),svg('polyline',{points:coordinates,fill:'none',stroke:color,'stroke-width':3,'stroke-linecap':'round','stroke-linejoin':'round'}))}segment=[]};for(const p of data){const valid=Number.isFinite(p[1])&&p[1]>=0&&p[1]<=100;if(!valid||(prev!==null&&p[0]-prev>(state.data?.step_seconds||30)*1500))draw();if(valid)segment.push(p);prev=p[0]}draw();const detected=options.detected;
+ if(Number.isFinite(detected)&&detected>=start&&detected<=end){
+  const marker=svg('line',{x1:X(detected),x2:X(detected),y1:t,y2:h-b,stroke:'#b4233d','stroke-width':2,'stroke-dasharray':'5 3'});
+  const title=svg('title',{});title.textContent='사건 탐지 '+date(detected)+' (KST)';marker.append(title);
+  s.append(marker);
+ }
+ const last=values.at(-1);s.append(svg('circle',{cx:X(last[0]),cy:Y(last[1]),r:4,fill:color,stroke:'#fff','stroke-width':2}));if(compact){holder.append(s);return}const cross=svg('line',{x1:X(last[0]),x2:X(last[0]),y1:t,y2:h-b,stroke:color,'stroke-dasharray':'3 3',opacity:'.5'}),dot=svg('circle',{cx:X(last[0]),cy:Y(last[1]),r:4,fill:color});s.append(cross,dot);const readout=E('output',undefined,'resource-readout');readout.setAttribute('aria-live','off');const slider=E('input',undefined,'resource-scrubber');slider.type='range';slider.min=0;slider.max=values.length-1;slider.step=1;slider.value=values.length-1;slider.setAttribute('aria-label',label+' 시각별 수치 확인');const select=i=>{const p=values[Math.max(0,Math.min(values.length-1,i))];readout.textContent=date(p[0])+' (KST) · '+fmt(p[1],3)+'%';slider.setAttribute('aria-valuetext',readout.textContent);cross.setAttribute('x1',X(p[0]));cross.setAttribute('x2',X(p[0]));dot.setAttribute('cx',X(p[0]));dot.setAttribute('cy',Y(p[1]))};slider.oninput=()=>select(Number(slider.value));s.onpointermove=e=>{const rect=s.getBoundingClientRect(),time=start+Math.max(0,Math.min(1,(e.clientX-rect.left-l*rect.width/w)/((w-l-r)*rect.width/w)))*(end-start);let index=0;values.forEach((p,i)=>{if(Math.abs(p[0]-time)<Math.abs(values[index][0]-time))index=i});slider.value=index;select(index)};select(values.length-1);holder.append(s,readout,slider);const span=Math.max(...values.map(p=>p[1]))-Math.min(...values.map(p=>p[1]));holder.append(E('p',values.length<2?'유효 표본 1개 · 변화 판단 불가':span<.1?'선택 기간 내 변화가 거의 없습니다.':'표시 표본 변동 폭 '+fmt(span,3)+'%p','resource-change'));if(zoom)holder.append(E('p','확대 보기는 사용량이 높은 상태를 뜻하지 않습니다.','resource-axis-note'))}
 const resourceKeys=['cpu','memory','disk'],resourceNames=['CPU','메모리','루트 디스크 (/)'],resourceColors=['#1879ee','#8a51ff','#00a6ad'];
 function metricCollection(host,h){if(!host)return '서버 자원 미확인';if(host.status==='stale')return '수집 지연';if(host.status!=='ok')return host.status==='unavailable'?'조회 실패':'데이터 없음';if(h&&h.status!=='ok')return name(h.status);return state.window==='custom'?'선택 시점 메트릭 확인':'메트릭 수집 정상'}
 function collectionBadge(host,h){const text=metricCollection(host,h),badge=E('span',text,'resource-collection');if(!['메트릭 수집 정상','선택 시점 메트릭 확인'].includes(text))badge.classList.add('resource-collection-unknown');return badge}
@@ -360,6 +366,35 @@ function sampleSummary(points){const values=resourceValues(points).map(p=>p[1]);
 
 function hostTitle(h){return (h.server_name||'서버')+(h.instance?' · '+h.instance:' · 수집 대상 미설정')}
 
+const demoCpuRows=[
+ ['a-normal','직원 포털 A · 정상','#1d65c1'],
+ ['a-load','직원 포털 A · 부하 시험','#b4233d'],
+ ['b-test','홈페이지 B','#8040b8'],
+ ['c-test','커뮤니티 C','#147c68'],
+];
+function demoCpuPanel(o,summary=false){
+ const data=o.resources.demo_cpu;
+ const panel=E('section',undefined,'read-section');
+ panel.append(E('h3','시험용 서비스 컨테이너 CPU'),
+  E('p','코어 1개 기준 · 100%는 1코어 사용 · 5분 평균','read-muted'));
+ const grid=E('div',undefined,summary?'read-stats':'resource-compare-grid');
+ const range={start:Date.parse(o.range_start),end:Date.parse(o.as_of),step:o.step_seconds};
+ const axis=incidentMetricAxis()||range;
+ for(const [key,label,color] of demoCpuRows){
+  const item=data.items?.[key],value=item?.value;
+  const card=summary?summaryCard(label,Number.isFinite(value)?fmt(value,2)+' %':data.status==='unavailable'?'조회 실패':'데이터 없음'):E('article',undefined,'resource-compare-host');
+  if(!summary){
+   card.append(E('h4',label));
+   const plot=E('div');
+   if(data.status==='unavailable')plot.append(E('p','조회 실패','read-muted'));
+   else servicePlot(plot,item?.points,color,label,true,false,axis,'%');
+   card.append(plot);
+  }
+  grid.append(card);
+ }
+ panel.append(grid);
+ return panel;
+}
 function renderResources(o){
  const root=$('.dashboard-hosts');
  root.replaceChildren();
@@ -400,6 +435,7 @@ function renderResources(o){
   if(host?.last_collected_at)section.append(E('small','마지막 유효 표본 '+date(host.last_collected_at)+' (KST)','overview-note'));
   root.append(section);
  }
+ if(o?.resources?.demo_cpu)root.append(demoCpuPanel(o,true));
 }
 const roles={'ec2-node':'호스트 지표 (Alloy)','portal-otel':'앱 지표 (Alloy)',prometheus:'자체 상태','portal-db-health':'직원 조회 점검','homepage-health':'홈페이지 HTTP 점검','homepage-organization':'조직도 API 점검','community-health':'커뮤니티 HTTP 점검','community-questions':'질문 목록 API 점검','homepage-request-metrics':'홈페이지 B · 요청 메트릭','community-request-metrics':'커뮤니티 C · 요청 메트릭'};
 function renderIncidents(tbody,rows,failed=false){tbody.replaceChildren();$('#incidents thead').innerHTML='<tr><th>발생 (KST)</th><th>구분</th><th>유형</th><th>대상</th><th>상태</th><th>AI 분석</th></tr>';
@@ -546,6 +582,24 @@ function incidentService(d){
  if(['proxy','app','database','portal-login','portal-health','portal-db-health','portal-otel'].includes(job)||['unauthorized_read','unauthorized_write'].includes(d.rule_id))return incidentServiceLabels.a;
  return '서비스 미확인';
 }
+function openIncidentMetrics(view, service, range, detected){
+ if(state.busy)return;
+ state.window='custom';
+ state.customRange=range;
+ state.detectedAt=new Date(detected).toISOString();
+ if(view==='resources'){
+  state.resourceKey='cpu';
+  const hosts=(state.data?.resources?.items||[]).filter(host=>host.server_role==='service');
+  state.resourceHost=hosts.length===1?(hosts[0].host_id||hosts[0].instance):null;
+ }
+ go(view,null,service);
+}
+function incidentMetricAxis(){
+ if(state.window!=='custom'||!state.customRange||!state.detectedAt)return null;
+ const start=Date.parse(state.customRange.start),end=Date.parse(state.customRange.end);
+ const detected=Date.parse(state.detectedAt);
+ return detected>=start&&detected<=end?{start,end,detected}:null;
+}
 function incidentTiming(d){
  const box=E('section',undefined,'incident-detail-timing');
  box.dataset.recovery=d.recovery_checked_at||'';
@@ -565,6 +619,16 @@ function incidentTiming(d){
  if(metricKey&&state.mode.mode!=='snapshot'){
   const current=Date.now(),start=detected-15*60000,end=Math.min(current,(verified?recovered:detected)+15*60000);
   if(end>=detected&&end-start>=60000&&end-start<=365*DAY_MS){
+   const range=validCustomRange(new Date(start).toISOString(),new Date(end).toISOString());
+   if(range){
+    const serviceKey={app_ms:'app',homepage_ms:'homepage',community_ms:'community'}[metricKey];
+    const links=E('div',undefined,'resource-compare-controls');
+    links.append(
+     button('서버 리소스 상세 보기',()=>openIncidentMetrics('resources',null,range,detected)),
+     button('서비스 지표 보기',()=>openIncidentMetrics('services',serviceKey,range,detected))
+    );
+    box.append(links);
+   }
    const plot=E('div',undefined,'incident-metric-chart');
    plot.append(E('p','사건 시점의 응답시간 조회 중','read-muted'));box.append(plot);
    const params=new URLSearchParams({window:'custom',start:new Date(start).toISOString(),end:new Date(end).toISOString()});
@@ -760,7 +824,7 @@ function showServices(o){const key=state.service,entry=publicRequestPaths[key],d
  }
  const health=serviceState(servers,key);
  if(!entry)panel.append(E('p','현재 기능 점검: '+health.label+' · 최근 점검 '+date(health.row?.last_checked_at)+' (KST)','read-muted'));
- if(o.historical)panel.append(E('p','과거 지표는 선택 종료 시점의 값이며 기능 점검 배지는 현재 상태입니다.','read-note'));const modes=E('div',undefined,'service-modes');for(const [mode,label]of [['full','전체 범위'],['zoom','변화 확대']]){const b=button(label,()=>{state.serviceScales[key]=mode;page.replaceChildren();showServices(o)});b.setAttribute('aria-pressed',String(state.serviceScales[key]===mode));modes.append(b)}if(!entry||metricPoints(metric?.points).length)panel.append(modes);const plot=E('div',undefined,'service-detail-chart');servicePlot(plot,metric?.points,def.color,def.label,false,state.serviceScales[key]==='zoom');const stats=serviceStats(metric?.points),summaries=E('div',undefined,'service-statistics');const current=metric?.status==='ok'&&Number.isFinite(metric.value)?metric.value:null;for(const [kind,label,value]of [['current',o.historical?'종료 시점':'현재값',current],['mean','표본 평균',stats.mean],['max','최대',stats.max],['min','최소',stats.min],['spread','표준 편차',stats.std]]){const item=E('div'),icon=E('span',undefined,'service-stat-icon service-stat-'+kind);icon.append(uiIcon(kind));const text=E('div');text.append(E('span',label),E('strong',Number.isFinite(value)?fmt(value,3)+' ms':'데이터 없음'));if(kind==='current'&&current!==null){const latest=metricPoints(metric?.points).at(-1);if(latest){const timestamp=E('small','('+new Date(latest[0]).toLocaleTimeString('ko-KR',{timeZone:'Asia/Seoul',hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'})+')','service-stat-time');timestamp.setAttribute('title','현재값에 대응하는 마지막 유효 표본 시각 (KST)');text.append(timestamp)}}item.append(icon,text);summaries.append(item)}const chartRow=E('div',undefined,'service-detail-chart-row');
+ if(o.historical)panel.append(E('p','과거 지표는 선택 종료 시점의 값이며 기능 점검 배지는 현재 상태입니다.','read-note'));const modes=E('div',undefined,'service-modes');for(const [mode,label]of [['full','전체 범위'],['zoom','변화 확대']]){const b=button(label,()=>{state.serviceScales[key]=mode;page.replaceChildren();showServices(o)});b.setAttribute('aria-pressed',String(state.serviceScales[key]===mode));modes.append(b)}if(!entry||metricPoints(metric?.points).length)panel.append(modes);const plot=E('div',undefined,'service-detail-chart');servicePlot(plot,metric?.points,def.color,def.label,false,state.serviceScales[key]==='zoom',incidentMetricAxis());const stats=serviceStats(metric?.points),summaries=E('div',undefined,'service-statistics');const current=metric?.status==='ok'&&Number.isFinite(metric.value)?metric.value:null;for(const [kind,label,value]of [['current',o.historical?'종료 시점':'현재값',current],['mean','표본 평균',stats.mean],['max','최대',stats.max],['min','최소',stats.min],['spread','표준 편차',stats.std]]){const item=E('div'),icon=E('span',undefined,'service-stat-icon service-stat-'+kind);icon.append(uiIcon(kind));const text=E('div');text.append(E('span',label),E('strong',Number.isFinite(value)?fmt(value,3)+' ms':'데이터 없음'));if(kind==='current'&&current!==null){const latest=metricPoints(metric?.points).at(-1);if(latest){const timestamp=E('small','('+new Date(latest[0]).toLocaleTimeString('ko-KR',{timeZone:'Asia/Seoul',hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'})+')','service-stat-time');timestamp.setAttribute('title','현재값에 대응하는 마지막 유효 표본 시각 (KST)');text.append(timestamp)}}item.append(icon,text);summaries.append(item)}const chartRow=E('div',undefined,'service-detail-chart-row');
  const chartPanel=E('section',undefined,'service-detail-box'),summaryPanel=E('section',undefined,'service-detail-box');
  chartPanel.append(E('h3',def.label+' 추이'),plot);
  summaryPanel.append(E('h3','응답시간 요약'),summaries);
@@ -771,22 +835,40 @@ function showServices(o){const key=state.service,entry=publicRequestPaths[key],d
  if(entry){
   if(!metricPoints(metric?.points).length)plot.replaceChildren(E('p',publicP95Empty(o,key,metric),'read-muted'));
   panel.append(chartRow,evidenceRow);
-  layout.append(panel);page.append(layout);return;
+  layout.append(panel);page.append(layout,routePerformance(o,key));return;
  }
  panel.append(chartRow,evidenceRow,E('p','유효 표본 '+stats.count+'개 · 평균·최대·최소·표준 편차는 구간별 p95 표시 표본의 통계이며 전체 요청의 통계가 아닙니다.','read-muted'));if(metric?.status!=='ok')panel.append(E('p','지표 상태: '+name(metric?.status||'no_data')+' · 조회 가능한 과거 추이와 구분합니다.','read-note'));layout.append(tabs,panel);page.append(layout);if(key==='app')page.append(E('p','HTTP 요청량·5xx 서버 오류는 앱 계측값입니다.','read-muted'));if(key==='database')page.append(E('p','앱 DB 작업시간은 애플리케이션 내부 계측값입니다. PostgreSQL 전체 부하나 세션 수를 뜻하지 않습니다. DB 연결 수·활성 세션은 미수집입니다.','read-muted'));if(key==='proxy')page.append(E('p','핵심 수치는 /health 경로 기준입니다. 아래 경로별 지표는 별도로 구분합니다.','read-muted'));
  if(key!=='database')page.append(routePerformance(o,key));
 }
 function routePerformance(o,key){
- const columns=key==='app'
-  ? [['app_routes','요청량 (건/초)',1],['app_p95_routes','응답시간 p95 (ms)',1]]
-  : [['proxy_requests','요청량 (건/초)',1],['proxy_errors','5xx (건/초)',1],
+ const proxy=key==='proxy';
+ const requestId=proxy?'proxy_requests':key+'_routes';
+ const errorId=proxy?'proxy_errors':key+'_errors_routes';
+ const columns=!proxy
+  ? [[requestId,'요청량 (건/초)',1],[key+'_p95_routes','응답시간 p95 (ms)',1]]
+  : [[requestId,'요청량 (건/초)',1],[errorId,'5xx (건/초)',1],
      ['proxy_p95','전체 응답시간 p95 (ms)',1000],['upstream_p95','업스트림 응답시간 p95 (ms)',1000]];
- const metrics=columns.map(([id,label,mult])=>{
-  const data=o.details?.[id];
+ const details=o.details||{};
+ const requests=details[requestId],errors=details[errorId];
+ const errorRows=new Map((errors?.items||[]).map(row=>[row.route,row]));
+ const rate={status:requests?.status==='unavailable'||errors?.status==='unavailable'?'unavailable':'ok',items:[]};
+ if(requests?.status==='ok'&&errors?.status==='ok'){
+  for(const row of requests.items||[]){
+   const error=errorRows.get(row.route);
+   if(!error)continue;
+   const byTime=new Map(error.points||[]);
+   const percent=(total,failed)=>Number.isFinite(total)&&total>0&&Number.isFinite(failed)?100*failed/total:null;
+   rate.items.push({route:row.route,value:percent(row.value,error.value),
+    points:(row.points||[]).map(([at,total])=>[at,percent(total,byTime.get(at))])});
+  }
+ }
+ const metrics=[...columns,['error_rate','5xx 오류율 (%)',1]].map(([id,label,mult])=>{
+  const data=id==='error_rate'?rate:details[id];
   return {label,mult,status:data?.status,rows:new Map((data?.items||[]).map(row=>[row.route,row]))};
  });
+ const axis=incidentMetricAxis()||{start:Date.parse(o.range_start),end:Date.parse(o.as_of)};
  const box=E('section',undefined,'detail-card'),scroll=E('div',undefined,'phase3-table-scroll');
- box.append(E('h3','경로별 성능'));
+ box.append(E('h3',publicRequestPaths[key]?'경로별 성능 · 시험 환경':'경로별 성능'));
  const table=E('table',undefined,'read-table phase3-route-table route-table-'+key),head=E('thead'),hr=E('tr'),body=E('tbody');
  for(const label of ['요청 경로',...metrics.map(metric=>metric.label)])hr.append(E('th',label));
  head.append(hr);table.append(head,body);scroll.append(table);box.append(scroll);
@@ -800,7 +882,7 @@ function routePerformance(o,key){
    metric.append(E('strong',value));
    if(status==='ok'&&row?.points?.some(p=>Number.isFinite(p[1]))){
     const plot=E('div',undefined,'route-plot');
-    chart(plot,row.points.map(([at,value])=>[at,Number.isFinite(value)?value*mult:null]),'#087df3');
+    chart(plot,row.points.map(([at,value])=>[at,Number.isFinite(value)?value*mult:null]),'#087df3',null,Number.isFinite(axis.start)&&Number.isFinite(axis.end)?axis:null);
     metric.append(plot);
    }
    cell.append(metric);tr.append(cell);
@@ -863,13 +945,16 @@ function resourceComparison(o,hosts){
  const grid=E('div',undefined,'resource-compare-grid');
  const roles=['service','monitoring'];
  const byRole=roles.map(role=>hosts.filter(h=>h.server_role===role));
+ const incidentAxis=incidentMetricAxis();
+ if(incidentAxis)section.append(E('p','사건 탐지 · '+date(incidentAxis.detected)+' (KST)','read-note'));
  const sharedAxes=resourceKeys.map(key=>{
   const points=byRole.filter(matches=>matches.length===1)
    .flatMap(([host])=>host.history?.[key]?.points||[]);
   const times=points.map(([at])=>at).filter(Number.isFinite);
   return {
    bounds:resourceBounds(resourceValues(points),state.graphScale==='zoom'),
-   range:times.length?[Math.min(...times),Math.max(...times)]:null,
+   range:incidentAxis?[incidentAxis.start,incidentAxis.end]:times.length?[Math.min(...times),Math.max(...times)]:null,
+   detected:incidentAxis?.detected,
   };
  });
  for(const [index,role]of roles.entries()){
@@ -905,6 +990,7 @@ function showResources(o){
  pageTitle('서버 리소스 상세',o);
  if(o.resources?.status==='unavailable')page.append(E('p','서버 자원 조회 실패','read-note'));
  page.append(resourceComparison(o,o.resources?.items||[]));
+ if(o.resources?.demo_cpu)page.append(demoCpuPanel(o));
  const target=page.querySelector('.resource-compare-selected');
  target?.scrollIntoView?.({block:'nearest'});
 }
