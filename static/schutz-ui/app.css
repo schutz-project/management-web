@@ -104,6 +104,8 @@
  color:#17375d;
  font:inherit;
  font-size:14px;
+ line-height:1.75;
+}
 .incident-workspace form>textarea{font-size:14px;line-height:1.8;min-height:140px}
 @media(min-width:1000px) and (max-width:1350px){
  .incident-table{min-width:0;table-layout:fixed}
