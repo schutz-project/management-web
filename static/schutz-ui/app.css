@@ -90,6 +90,20 @@
 .incident-workspace form>label{margin:0}.incident-workspace form textarea{margin:0}
 .incident-workspace form>button,.incident-workspace .draft-panel>button{align-self:flex-start;min-width:160px;margin:0}
 .incident-workspace .draft-panel{margin:0;padding:14px}
+.incident-workspace .draft-panel>textarea:not([hidden]){
+ display:block;
+ box-sizing:border-box;
+ width:100%;
+ min-height:160px;
+ margin:12px 0;
+ padding:12px;
+ resize:vertical;
+ border:1px solid #cbdcef;
+ border-radius:8px;
+ background:#fff;
+ color:#17375d;
+ font:inherit;
+ font-size:14px;
 .incident-workspace form>textarea{font-size:14px;line-height:1.8;min-height:140px}
 @media(min-width:1000px) and (max-width:1350px){
  .incident-table{min-width:0;table-layout:fixed}
