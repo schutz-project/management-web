@@ -279,8 +279,8 @@ test('경로별 성능은 지표를 경로별로 병합하고 결측과 0을 구
  const a=boot({hash:'#view=services&service=proxy',observability:{details}});await settle();
  const rows=a.doc.querySelectorAll('.phase3-route-table tbody tr');
  assert.equal(rows.length,3);
- assert.deepEqual(rows[0].querySelectorAll('td').map(cell=>cell.textContent),['/a','0','데이터 없음','3','데이터 없음']);
- assert.match(rows[2].textContent,/^\/c.*4$/);
+ assert.deepEqual(rows[0].querySelectorAll('td').map(cell=>cell.textContent),['/a','0','데이터 없음','3','데이터 없음','데이터 없음']);
+ assert.match(rows[2].textContent,/^\/c.*4데이터 없음$/);
 });
 
 test('로그는 요청 ID로 연결하고 정상 점검만 숨긴다',async()=>{
