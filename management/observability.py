@@ -44,6 +44,37 @@ def point_summary(points):
     return {'mean':sum(values)/len(values),'max':max(values),'samples':len(values)} if values else {'mean':None,'max':None,'samples':0}
 
 REQUESTS='sum(rate(portal_http_requests{job="portal-otel"}[2m]))'
+DEMO_CPU_QUERY = (
+    '100 * rate(schutz_demo_container_cpu_usage_seconds_total{job="ec2-node",server_role="service"}[5m])'
+    ' and on(job, instance) (time() - node_textfile_mtime_seconds'
+    '{job="ec2-node",file=~".*/schutz-demo-container-cpu[.]prom"} <= 60)'
+)
+DEMO_CPU_GROUPS = {("a", "normal"), ("a", "load"), ("b", "test"), ("c", "test")}
+
+def demo_cpu_series(result, end, step):
+    if isinstance(result, Exception):
+        return {"status": "unavailable", "items": {}}
+    items = {}
+    duplicates = set()
+    for row in result:
+        labels = row.get("metric", {})
+        group = (labels.get("service"), labels.get("mode"))
+        if group not in DEMO_CPU_GROUPS:
+            continue
+        key = "-".join(group)
+        if key in items:
+            duplicates.add(key)
+            continue
+        points = [[float(t) * 1000, number(value)] for t, value in row.get("values", [])][-MAX_POINTS:]
+        last = points[-1] if points else None
+        items[key] = {
+            "points": points,
+            "value": last[1] if last and last[0] / 1000 >= end - min(step, 60) else None,
+        }
+    for key in duplicates:
+        items.pop(key)
+    return {"status": "ok" if items else "no_data", "items": items}
+
 METRICS={
  'requests':REQUESTS,
  'errors':'(sum(rate(portal_http_requests{job="portal-otel",http_response_status_code=~"5.."}[2m])) or vector(0)) and on() '+REQUESTS,
@@ -66,6 +97,7 @@ for service_key in ('homepage', 'community'):
 # These fixed queries preserve the operational panels used before Grafana retirement.
 DETAIL_PROM={
  'app_routes':'sum by (http_route) (rate(portal_http_requests{job="portal-otel"}[2m]))',
+ 'app_errors_routes':'sum by (http_route) (rate(portal_http_requests{job="portal-otel",http_response_status_code=~"5.."}[2m])) or on(http_route) (0 * sum by (http_route) (rate(portal_http_requests{job="portal-otel"}[2m])))',
  'app_p95_routes':'histogram_quantile(0.95,sum by (le,http_route) (rate(portal_http_duration_bucket{job="portal-otel"}[5m])))',
 }
 DETAIL_LOKI={
@@ -86,6 +118,20 @@ PUBLIC_LOG_ROUTES = {
     'schutz-homepage': {'/', '/health', '/api/organization'},
     'schutz-community': {'/', '/health', '/api/guides', '/api/questions'},
 }
+PUBLIC_DETAIL_ROUTES = {
+    "homepage": PUBLIC_LOG_ROUTES["schutz-homepage"],
+    "community": PUBLIC_LOG_ROUTES["schutz-community"] | {"/api/guides/{id}", "/api/questions/{id}"},
+}
+for service_key, paths in PUBLIC_DETAIL_ROUTES.items():
+    route_pattern = json.dumps("|".join(re.escape(path) for path in sorted(paths)))
+    selector = '{service="schutz-' + service_key + '",environment="demo",job="schutz-demo-' + service_key + '-route",route=~' + route_pattern + '}'
+    requests = 'sum by (route) (rate(schutz_service_route_http_requests_total' + selector + '[2m]))'
+    errors = 'sum by (route) (rate(schutz_service_route_http_requests_total' + selector[:-1] + ',status_class="5xx"}[2m]))'
+    DETAIL_PROM.update({
+        service_key + "_routes": requests,
+        service_key + "_errors_routes": errors + ' or on(route) (0 * ' + requests + ')',
+        service_key + "_p95_routes": '1000 * histogram_quantile(0.95,sum by (le,route) (rate(schutz_service_route_http_duration_seconds_bucket' + selector + '[5m])))',
+    })
 LOG_SERVICES = ('portal-api', 'portal-nginx', *PUBLIC_LOG_ROUTES)
 UVICORN_ACCESS = re.compile(
     r'INFO:\s+\S+\s+- "(?P<method>[A-Z]+) (?P<target>/[^\s"]*) '
@@ -204,6 +250,7 @@ class Observer:
         tasks={'source':prom('max(timestamp(portal_http_requests{job="portal-otel"}))'),'node_source':prom(NODE_SOURCE_QUERY)}
         tasks.update({key+'_source':prom(expr) for key,expr in PUBLIC_METRIC_SOURCES.items()})
         tasks.update({key:prom(expr,True) for key,expr in METRICS.items()});tasks.update({key:prom(expr) for key,expr in RESOURCE.items()})
+        tasks['demo_cpu']=prom(DEMO_CPU_QUERY,True)
         tasks.update({'history_'+key:prom(expr,True) for key,expr in RESOURCE.items()})
         tasks.update({service:logs(service) for service in LOG_SERVICES})
         tasks.update({'detail_'+key:prom(expr,True) for key,expr in DETAIL_PROM.items()})
@@ -301,7 +348,10 @@ class Observer:
             for row in rows[:30]:
                 metric=row.get('metric',{})
                 route=metric.get(label,'')
-                if route not in ROUTES: route='other'
+                public_routes = PUBLIC_DETAIL_ROUTES.get(key.partition('_')[0])
+                if public_routes is not None and route not in public_routes:
+                    continue
+                if public_routes is None and route not in ROUTES: route='other'
                 points=[]
                 for stamp,value in row.get('values',[]):
                     seconds=float(stamp)
@@ -315,7 +365,7 @@ class Observer:
                         items.append({'route':route,'value':points[-1][1] if recent else None,'points':points})
             items.sort(key=lambda item:(item['route'], item['value'] is None))
             return {'status':'ok','items':items[:12]}
-        details={key:series(key,'http_route' if key in DETAIL_PROM else 'route') for key in (*DETAIL_PROM,*DETAIL_LOKI)}
+        details={key:series(key,'http_route' if key.startswith('app_') else 'route') for key in (*DETAIL_PROM,*DETAIL_LOKI)}
         proxy_errors=details['proxy_errors']
         proxy_requests=details['proxy_requests']
         if proxy_errors['status']=='ok' and proxy_requests['status']=='ok':
@@ -416,4 +466,4 @@ class Observer:
                         elif match:=re.search(r'http status (\d{3})\b',error):
                             result['failure_reason']='HTTP '+match[1]
                 target_rows.append(result)
-        return {'as_of':datetime.fromtimestamp(end,timezone.utc).isoformat(),'current_as_of':datetime.fromtimestamp(live_end,timezone.utc).isoformat(),'historical':window=='custom','window_minutes':seconds//60,'window':window,'step_seconds':step,'range_start':datetime.fromtimestamp(start,timezone.utc).isoformat(),'metrics':metrics,'service_probes':probes,'public_health_history':health_history,'details':details,'alerts':{'status':'unavailable' if isinstance(alerts,Exception) else 'ok','items':alert_rows},'targets':{'status':'unavailable' if isinstance(targets,Exception) else 'ok','items':target_rows},'resources':{'status':resource_status,'source_status':'unavailable' if isinstance(source,Exception) else 'ok' if nodes else 'no_data','metadata_status':metadata_status,'metric_status':metric_status,'items':hosts},'logs':{service:{'status':'unavailable' if isinstance(data[service],Exception) else 'ok','items':[] if isinstance(data[service],Exception) else data[service]} for service in LOG_SERVICES}}
+        return {'as_of':datetime.fromtimestamp(end,timezone.utc).isoformat(),'current_as_of':datetime.fromtimestamp(live_end,timezone.utc).isoformat(),'historical':window=='custom','window_minutes':seconds//60,'window':window,'step_seconds':step,'range_start':datetime.fromtimestamp(start,timezone.utc).isoformat(),'metrics':metrics,'service_probes':probes,'public_health_history':health_history,'details':details,'alerts':{'status':'unavailable' if isinstance(alerts,Exception) else 'ok','items':alert_rows},'targets':{'status':'unavailable' if isinstance(targets,Exception) else 'ok','items':target_rows},'resources':{'status':resource_status,'source_status':'unavailable' if isinstance(source,Exception) else 'ok' if nodes else 'no_data','metadata_status':metadata_status,'metric_status':metric_status,'items':hosts,'demo_cpu':demo_cpu_series(data['demo_cpu'],end,step)},'logs':{service:{'status':'unavailable' if isinstance(data[service],Exception) else 'ok','items':[] if isinstance(data[service],Exception) else data[service]} for service in LOG_SERVICES}}
