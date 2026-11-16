@@ -310,3 +310,7 @@
 }
 
 .public-health-summary .svc-caption{display:grid;gap:8px;margin:0}
+
+.dashboard-demo-cpu{grid-column:1/-1}
+.dashboard-demo-cpu h3,.dashboard-demo-cpu .read-muted{margin:0}
+.dashboard-demo-cpu .read-stats{margin:8px 0 0}
